@@ -643,6 +643,20 @@ Outside Development the server refuses to start without both. Access tokens are
 only accepted in the `Authorization` header, never in the URL, so they cannot
 end up in access logs.
 
+For native desktop sign-in, admins additionally configure
+`Authentication__NativeClient__ClientId` and
+`Authentication__NativeClient__Scope` (including `openid` and the provider's
+API scopes; `offline_access` enables refresh tokens where supported). Register
+this as a public native client using authorization code with S256 PKCE and a
+loopback redirect at `http://127.0.0.1:{ephemeral-port}/callback`, following
+RFC 8252. No client secret is shipped with the desktop application.
+
+`GET /client-configuration` publishes only the protocol version, configured
+issuer URL, native client ID and scopes. These are public service configuration,
+not user or project data. The endpoint returns 503 when native sign-in is not
+configured; existing authenticated hub clients remain supported. This endpoint
+does not create an OIDC provider or register the native client in that provider.
+
 Roles per membership:
 
 - **owner:** adds and removes members, rotates epochs, edits
@@ -701,6 +715,22 @@ Roles per membership:
       updates, and a compromised server could relay them. Clients must reject
       updates from viewer devices too, which needs a member/role list the server
       cannot forge (e.g. signed by an owner).
+
+## Relay-only desktop integration
+
+The Novalist desktop integration now uses the live packet relay described in
+[relay.md](relay.md). Enable it with `Relay:Enabled=true`; it supersedes this document's
+storage and offline-joining design for that integration. It maps no persistence
+endpoints and requires no database. The preceding design remains documentation
+for persistence mode, which remains the default (`Relay:Enabled=false`).
+
+Relay authentication is optional through `Relay:RequireAuthentication=false`;
+the default remains true. Anonymous hosts prove route ownership with a random
+session capability in the `X-Novalist-Relay-Host` request header. The server learns
+that capability and retains only its SHA-256 hash in memory for the session's
+lifetime. This adds transient relay metadata, not project encryption keys or
+participant names. See [relay.md](relay.md) for discovery, transport requirements
+and ownership checks. The legacy persistence mode's authentication is unchanged.
 
 ## 13. Future work
 

@@ -10,6 +10,8 @@ the minor version.
 
 ### Added
 
+- Contracts 1.1.0: Relay and native client configuration: opt-in relay routing, optional authentication, limits, connection renewal and bounded authorization grace. `NativeClientConfiguration`, `RelayProtocol` and client configuration path constants are additive; the envelope protocol remains 1.
+
 - `Protocol.Version` (protocol version 1).
 - `MsgType` enum: `Update = 1`, `Snapshot = 2`, `Presence = 3`.
 - `EnvelopeHeader` record with the 62-byte layout from design.md §7:

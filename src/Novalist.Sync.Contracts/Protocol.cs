@@ -6,6 +6,7 @@ public static class Protocol
     public const string HubPath = "/sync";
     public const string DevicesPath = "/devices";
     public const string DeviceIdParameter = "deviceId";
+    public const string ClientConfigurationPath = "/client-configuration";
 }
 
 public enum MsgType : byte

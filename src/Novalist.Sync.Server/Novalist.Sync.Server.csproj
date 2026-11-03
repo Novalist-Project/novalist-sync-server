@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Novalist.Sync.Contracts\Novalist.Sync.Contracts.csproj" />
+    <InternalsVisibleTo Include="Novalist.Sync.Server.Tests" />
   </ItemGroup>
 
   <ItemGroup>
