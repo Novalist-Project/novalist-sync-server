@@ -2,7 +2,6 @@ namespace Novalist.Sync.Contracts;
 
 public interface ISyncHub
 {
-
     Task JoinProject(Guid projectId);
     Task LeaveProject(Guid projectId);
 
