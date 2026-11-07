@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Access;
 using Novalist.Sync.Server.Data;
 using Novalist.Sync.Server.Tests.Infrastructure;
@@ -107,6 +108,8 @@ public sealed class EpochCompactionTests(DatabaseFixture database)
         Assert.Contains(project.ToString(), entry.Message, StringComparison.Ordinal);
         var secrets = new[] { checkpoint.Ciphertext, checkpoint.Nonce, checkpoint.Signature }
             .SelectMany(bytes => new[] { Convert.ToBase64String(bytes), Convert.ToHexString(bytes), Convert.ToHexStringLower(bytes) });
+        foreach (var capturedEntry in captured.Entries)
+            Assert.DoesNotContain(capturedEntry.Values.Concat(capturedEntry.ScopeValues), value => value is byte[] or Envelope);
         foreach (var logged in captured.Entries.SelectMany(value => new[] { value.Message, value.ScopeText }
             .Concat(value.Values.Select(item => item?.ToString())).Concat(value.ScopeValues.Select(item => item?.ToString()))))
             Assert.All(secrets, secret => Assert.DoesNotContain(secret, logged ?? "", StringComparison.Ordinal));
