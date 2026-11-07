@@ -10,7 +10,7 @@ public sealed partial class ProjectEpochAccess
         ValidateGrant(grant);
         await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
         await EnsureDeviceAsync(user, device, ct);
-        var stage = await LockStageAsync(rotation, device, ct);
+        var stage = await LockStageForUploadAsync(rotation, device, ct);
         await projects.EnsureIsOwnerAsync(user, stage.ProjectId, ct);
         var existing = await db.ProjectEpochDeviceGrants.FindAsync([rotation, grant.DeviceId], ct);
         if (existing is not null)

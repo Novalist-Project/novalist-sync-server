@@ -106,7 +106,7 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
             throw new FormatException("Invalid staged checkpoint envelope.");
         await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
         await EnsureDeviceAsync(user, device, ct);
-        var stage = await LockStageAsync(rotation, device, ct);
+        var stage = await LockStageForUploadAsync(rotation, device, ct);
         await projects.EnsureIsOwnerAsync(user, stage.ProjectId, ct);
         if (header.ProjectId != stage.ProjectId || header.Epoch != stage.PreviousEpoch + 1)
             throw new ConflictException("The checkpoint belongs to another transition.");
@@ -138,11 +138,21 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
         (await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {project} FOR UPDATE").AsNoTracking().ToListAsync(ct)).SingleOrDefault()
         ?? throw new AccessDeniedException("The shared project is unavailable.");
 
-    private async Task<ProjectEpochStage> LockStageAsync(Guid rotation, Guid device, CancellationToken ct)
+    private async Task<ProjectEpochStage> LockStageForUploadAsync(Guid rotation, Guid device, CancellationToken ct)
+    {
+        var projectId = await db.ProjectEpochStages.AsNoTracking().Where(stage => stage.Id == rotation)
+            .Select(stage => (Guid?)stage.ProjectId).SingleOrDefaultAsync(ct)
+            ?? throw new ConflictException("The project transition is unavailable.");
+        // A second stage update can recheck the project FK; take its lock before the stage lock.
+        await LockProjectAsync(projectId, ct);
+        return await LockStageAsync(rotation, device, ct, projectId);
+    }
+
+    private async Task<ProjectEpochStage> LockStageAsync(Guid rotation, Guid device, CancellationToken ct, Guid? expectedProject = null)
     {
         var stage = (await db.ProjectEpochStages.FromSqlInterpolated($"SELECT * FROM project_epoch_stages WHERE id = {rotation} FOR UPDATE").ToListAsync(ct)).SingleOrDefault();
         var now = await DatabaseTimeAsync(ct);
-        if (stage is null || stage.DeviceId != device || IsExpired(stage, now))
+        if (stage is null || stage.DeviceId != device || (expectedProject.HasValue && stage.ProjectId != expectedProject) || IsExpired(stage, now))
             throw new ConflictException("The project transition is unavailable or expired.");
         stage.LastActivityAt = now;
         await db.SaveChangesAsync(ct);
