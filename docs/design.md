@@ -988,6 +988,9 @@ never inferred from an untrusted Host header. Clients compare the advertised URL
 with their selected endpoint and sign their own canonical endpoint. This prevents
 a server from relaying a proof to another server accepting the same OIDC token.
 Changing the public endpoint requires clients to select the new canonical URL.
+The server accepts only HTTPS outside local Development, closes a hub connection
+when its access token expires, and limits requests, connections and hub calls per
+address, account and instance; see [transport.md](transport.md).
 
 The invitation API additionally stores invitation identifiers, project IDs,
 expiry times and the claiming account ID. No project keys, names, paths or

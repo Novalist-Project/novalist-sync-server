@@ -21,17 +21,9 @@ in anonymous sessions are chosen labels, not verified account identities.
 
 No `ConnectionStrings:Default`, PostgreSQL instance or migrations are needed in
 relay mode. Start with `dotnet run --project src/Novalist.Sync.Server`. Remote clients
-require HTTPS. The server rejects insecure relay requests before authentication;
-HTTP is accepted only in the Development environment when both socket addresses
-are loopback addresses.
-
-Terminate TLS at Kestrel or at a trusted reverse proxy. With a proxy, configure
-`Relay__KnownProxies__0` (and further indexed entries) with its exact IP address.
-Only these proxies may supply `X-Forwarded-For` and `X-Forwarded-Proto`; they must
-send both headers and overwrite any client-supplied values. Forwarding is disabled
-unless configured, and the server trusts at most one proxy hop. Keep the internal
-HTTP listener reachable only by that proxy and expose HTTPS to clients: rejecting
-an HTTP request cannot undo credentials already transmitted over that connection.
+require HTTPS, and a trusted reverse proxy is configured with
+`Transport__KnownProxies__*` (`Relay__KnownProxies__*` remains a deprecated alias).
+Both apply to the whole server; see [transport.md](transport.md).
 See [ASP.NET Core proxy configuration](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/proxy-load-balancer?view=aspnetcore-10.0).
 
 When authentication is required, all WebSocket endpoints require a valid access
