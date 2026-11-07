@@ -101,6 +101,34 @@ Keep that address stable, for example using a fixed IP on a private Docker netwo
 Do not expose the app's HTTP port publicly. Connect the proxy to the app over the
 private network, or publish only to loopback for a proxy on the Docker host.
 
+For a containerized proxy, replace the direct-TLS `docker run` command with the
+following shared-network setup. Replace `nginx-proxy` with your existing proxy
+container's name. Choose an unused subnet; if you change the proxy IP, change
+`Transport__KnownProxies__0` to match. Preserve this network attachment and fixed
+IP in the proxy's deployment configuration when recreating it.
+
+If you already started the direct-TLS container, run `docker stop novalist-sync`
+and `docker rm novalist-sync` first. This ends its active relay sessions and frees
+port 443 for the proxy. The proxy owns the public port and TLS certificates;
+the replacement app container has no published ports or certificate mounts.
+
+```bash
+docker network create --subnet 172.30.50.0/24 novalist-proxy
+docker network connect --ip 172.30.50.2 novalist-proxy nginx-proxy
+
+docker run -d --name novalist-sync --restart unless-stopped \
+  --network novalist-proxy \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop ALL --security-opt no-new-privileges=true \
+  --env-file /absolute/path/relay.env \
+  -e Transport__KnownProxies__0=172.30.50.2 \
+  "$IMAGE"
+```
+
+Use the environment file with the direct-TLS settings removed as described above.
+Docker resolves `novalist-sync` for the proxy because both containers share this
+user-defined network. The proxy reaches the app on port 8080 without a `-p` mapping.
+
 The proxy must overwrite both forwarded headers and support long-lived WebSockets.
 For an nginx proxy on the same private network, use this inside its HTTPS server
 block (with your existing `listen 443 ssl`, hostname and certificate settings):
