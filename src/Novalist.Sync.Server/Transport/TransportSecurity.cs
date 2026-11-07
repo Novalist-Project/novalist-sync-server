@@ -1,8 +1,6 @@
 using System.Net;
-using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.Extensions.Options;
-using Novalist.Sync.Contracts;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace Novalist.Sync.Server.Transport;
 
@@ -10,31 +8,33 @@ public static class TransportSecurity
 {
     public static IServiceCollection AddTransportSecurity(this IServiceCollection services, IConfiguration configuration)
     {
+        var proxies = KnownProxies(configuration);
         services.AddOptions<TransportOptions>().Bind(configuration.GetSection(TransportOptions.Section))
             .ValidateDataAnnotations()
-            .Validate(options => options.KnownProxies.All(proxy => IPAddress.TryParse(proxy, out _)),
-                "Transport:KnownProxies must contain IP addresses.")
+            .Validate(options => proxies.Values.All(proxy => IPAddress.TryParse(proxy, out IPAddress? _)),
+                $"{proxies.Key} must contain IP addresses.")
+            .Validate(options => options.HubCallBurst >= options.HubCallsPerSecond,
+                "Transport:HubCallBurst must be at least Transport:HubCallsPerSecond.")
             .ValidateOnStart();
-        var proxies = KnownProxies(configuration);
         services.Configure<ForwardedHeadersOptions>(options =>
         {
-            if (proxies.Length == 0) return;
+            if (proxies.Values.Length == 0) return;
             options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
             options.RequireHeaderSymmetry = true;
             options.ForwardLimit = 1;
             options.KnownProxies.Clear();
             options.KnownIPNetworks.Clear();
-            foreach (var proxy in proxies)
+            foreach (var proxy in proxies.Values)
                 if (IPAddress.TryParse(proxy, out var address)) options.KnownProxies.Add(address);
         });
-        return services.AddRateLimiter(options =>
+        services.AddSingleton<TransportRequestLimiter>();
+        services.AddRateLimiter(_ => { });
+        services.AddOptions<RateLimiterOptions>().Configure<TransportRequestLimiter>((options, limiter) =>
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-            options.GlobalLimiter = PartitionedRateLimiter.CreateChained(
-                PerMinute(_ => "all", value => value.RequestsPerMinute),
-                PerMinute(context => ClientAddress.Key(context.Connection.RemoteIpAddress), value => value.RequestsPerMinutePerIp),
-                PerMinute(Account, value => value.RequestsPerMinutePerAccount));
+            options.GlobalLimiter = limiter.Limiter;
         });
+        return services;
     }
 
     // Before authentication: trust forwarded headers only from configured proxies, then refuse plain HTTP.
@@ -62,40 +62,23 @@ public static class TransportSecurity
         });
     }
 
+    // After authentication, so account buckets apply.
+    public static IApplicationBuilder UseTransportRequestLimits(this IApplicationBuilder app)
+    {
+        app.UseRateLimiter();
+        var limiter = app.ApplicationServices.GetRequiredService<TransportRequestLimiter>();
+        return app.Use((context, next) => limiter.ChargeRejectedConnectionTokensAsync(context, next));
+    }
+
     // Relay:KnownProxies is the deprecated name from before persistence mode shared these settings.
-    private static string[] KnownProxies(IConfiguration configuration)
+    private static ProxySetting KnownProxies(IConfiguration configuration)
     {
-        var shared = configuration.GetSection(TransportOptions.Section + ":KnownProxies").Get<string[]>() ?? [];
-        return shared.Length > 0 ? shared : configuration.GetSection("Relay:KnownProxies").Get<string[]>() ?? [];
+        const string shared = TransportOptions.Section + ":KnownProxies";
+        var values = configuration.GetSection(shared).Get<string[]>() ?? [];
+        return values.Length > 0
+            ? new(shared, values)
+            : new("Relay:KnownProxies", configuration.GetSection("Relay:KnownProxies").Get<string[]>() ?? []);
     }
 
-    // Relay endpoints have their own quotas. Requests that carry a SignalR connection token belong to an
-    // already admitted connection, which the connection caps and hub call limits cover.
-    internal static bool Counted(HttpContext context)
-    {
-        var path = context.Request.Path;
-        if (path.StartsWithSegments("/relay/v1")) return false;
-        if (!path.StartsWithSegments(Protocol.HubPath, out var rest)) return true;
-        return rest.Equals("/negotiate", StringComparison.OrdinalIgnoreCase) || !context.Request.Query.ContainsKey("id");
-    }
-
-    private static string? Account(HttpContext context) =>
-        context.User.FindFirst("iss")?.Value is { Length: > 0 } issuer && context.User.FindFirst("sub")?.Value is { Length: > 0 } subject
-            ? issuer + "\n" + subject
-            : null;
-
-    private static PartitionedRateLimiter<HttpContext> PerMinute(Func<HttpContext, string?> key, Func<TransportOptions, int> limit) =>
-        PartitionedRateLimiter.Create<HttpContext, string>(context =>
-        {
-            if (!Counted(context) || key(context) is not { } partition) return RateLimitPartition.GetNoLimiter("");
-            var perMinute = limit(context.RequestServices.GetRequiredService<IOptions<TransportOptions>>().Value);
-            return RateLimitPartition.GetTokenBucketLimiter(partition, _ => new TokenBucketRateLimiterOptions
-            {
-                TokenLimit = perMinute,
-                TokensPerPeriod = Math.Max(1, (int)Math.Ceiling(perMinute / 60.0)),
-                ReplenishmentPeriod = TimeSpan.FromSeconds(1),
-                QueueLimit = 0,
-                AutoReplenishment = true
-            });
-        });
+    private sealed record ProxySetting(string Key, string[] Values);
 }

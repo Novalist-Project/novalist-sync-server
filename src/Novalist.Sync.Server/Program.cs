@@ -72,7 +72,7 @@ var app = builder.Build();
 app.UseTransportSecurity(app.Environment);
 if (relayEnabled) app.UseRelayRequestQuotas();
 app.UseAuthentication();
-app.UseRateLimiter();
+app.UseTransportRequestLimits();
 app.UseAuthorization();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20), KeepAliveTimeout = TimeSpan.FromSeconds(15) });
 

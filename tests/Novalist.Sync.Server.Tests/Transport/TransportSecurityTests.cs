@@ -169,6 +169,7 @@ public sealed class TransportSecurityTests(DatabaseFixture database)
 
     [Theory]
     [InlineData("Transport:KnownProxies:0", "proxy.example")]
+    [InlineData("Relay:KnownProxies:0", "proxy.example")]
     [InlineData("Transport:MaxConnectionsPerAccount", "0")]
     [InlineData("Transport:HubCallsPerSecond", "0")]
     public async Task InvalidTransportSettingsPreventStartup(string setting, string value)
@@ -184,12 +185,48 @@ public sealed class TransportSecurityTests(DatabaseFixture database)
         Assert.Contains(setting.Split(':')[1], error.Message);
     }
 
-    private static async Task<int> SendAsync(SyncServer server, string path, string scheme, string address, (string For, string Proto)? forwarded)
+    [Fact]
+    public async Task MadeUpConnectionTokensAreChargedAndRefusedOnceTheAllowanceIsUsed()
+    {
+        await using var server = new SyncServer(database, settings: new Dictionary<string, string> { ["Transport:RequestsPerMinutePerIp"] = "2" });
+
+        for (var probe = 0; probe < 2; probe++)
+        {
+            var status = await SendAsync(server, Protocol.HubPath, "https", "203.0.113.5", null, "?id=" + Guid.NewGuid());
+            Assert.InRange(status, 400, 428);
+        }
+
+        Assert.Equal(429, await SendAsync(server, Protocol.HubPath, "https", "203.0.113.5", null, "?id=" + Guid.NewGuid()));
+        Assert.Equal(429, await SendAsync(server, Protocol.ClientConfigurationPath, "https", "203.0.113.5", null));
+        Assert.NotEqual(429, await SendAsync(server, Protocol.ClientConfigurationPath, "https", "203.0.113.6", null));
+    }
+
+    [Fact]
+    public async Task HubCallBurstBelowTheSustainedRatePreventsStartup()
+    {
+        var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Production" });
+        builder.WebHost.UseTestServer();
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Transport:HubCallBurst"] = "10",
+            ["Transport:HubCallsPerSecond"] = "20"
+        });
+        builder.Services.AddTransportSecurity(builder.Configuration);
+        await using var app = builder.Build();
+
+        var error = await Assert.ThrowsAsync<OptionsValidationException>(() => app.StartAsync(TestContext.Current.CancellationToken));
+
+        Assert.Contains("HubCallBurst", error.Message);
+    }
+
+    private static async Task<int> SendAsync(SyncServer server, string path, string scheme, string address, (string For, string Proto)? forwarded,
+        string query = "")
     {
         var result = await server.Server.SendAsync(context =>
         {
             context.Request.Method = "GET";
             context.Request.Path = path;
+            context.Request.QueryString = new(query);
             context.Request.Scheme = scheme;
             context.Connection.RemoteIpAddress = IPAddress.Parse(address);
             context.Connection.LocalIpAddress = IPAddress.Loopback;

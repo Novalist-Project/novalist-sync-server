@@ -10,7 +10,10 @@ public sealed class ConnectionRegistry
     private readonly ConcurrentDictionary<string, Connection> _connections = new();
     private readonly object _admission = new();
 
-    public void Add(HubCallerContext context, Guid userId, Guid deviceId) => _connections[context.ConnectionId] = new Connection(context, userId, deviceId, "");
+    public void Add(HubCallerContext context, Guid userId, Guid deviceId)
+    {
+        lock (_admission) _connections[context.ConnectionId] = new Connection(context, userId, deviceId, "");
+    }
 
     // Admits the connection only while the instance, its account and its client address are under their caps.
     public bool TryAdd(HubCallerContext context, Guid userId, Guid deviceId, string address, ConnectionLimits limits)
@@ -26,7 +29,11 @@ public sealed class ConnectionRegistry
         }
     }
 
-    public void Remove(string connectionId) => _connections.TryRemove(connectionId, out _);
+    // Under the admission lock, so a connection that closed is never counted by a concurrent admission.
+    public void Remove(string connectionId)
+    {
+        lock (_admission) _connections.TryRemove(connectionId, out _);
+    }
 
     public void AbortDevice(Guid deviceId)
     {
