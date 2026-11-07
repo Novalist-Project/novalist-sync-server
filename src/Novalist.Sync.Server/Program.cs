@@ -28,6 +28,7 @@ else
 
     builder.Services.AddScoped<UpdateLog>();
     builder.Services.AddScoped<BlobStore>();
+    builder.Services.AddScoped<BlobCollector>();
     builder.Services.AddOptions<BlobStorageOptions>().Bind(builder.Configuration.GetSection(BlobStorageOptions.Section))
         .ValidateDataAnnotations()
         .ValidateOnStart();

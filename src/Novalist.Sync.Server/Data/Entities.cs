@@ -1,5 +1,16 @@
 namespace Novalist.Sync.Server.Data;
 
+public sealed class StoredBlob
+{
+    public Guid ProjectId { get; set; }
+    public Guid BlobId { get; set; }
+    public long BytesStored { get; set; }
+    // Set by the first reference report that omits the blob; cleared when a report includes it again.
+    public DateTimeOffset? UnreferencedSince { get; set; }
+    // Set when a report at least one grace period after UnreferencedSince still omits the blob.
+    public DateTimeOffset? CollectableAt { get; set; }
+}
+
 public sealed class StoredBlobChunk
 {
     public Guid ProjectId { get; set; }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Novalist.Sync.Server.Blobs;
 using Novalist.Sync.Server.Data;
 using Novalist.Sync.Server.Updates;
 
@@ -77,6 +78,8 @@ public sealed class EphemeralStateCleanupService(IServiceScopeFactory scopes, IL
                 await using var scope = scopes.CreateAsyncScope();
                 var compacted = await scope.ServiceProvider.GetRequiredService<EphemeralStateCleanup>().PruneAsync(stoppingToken);
                 if (compacted > 0) logger.LogInformation("Deleted {Count} updates superseded by rotation checkpoints.", compacted);
+                var collected = await scope.ServiceProvider.GetRequiredService<BlobCollector>().CollectAsync(stoppingToken);
+                if (collected > 0) logger.LogInformation("Deleted {Count} unreferenced blobs.", collected);
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {

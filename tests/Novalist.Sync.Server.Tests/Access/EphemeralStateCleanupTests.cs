@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Novalist.Sync.Server.Access;
+using Novalist.Sync.Server.Blobs;
 using Novalist.Sync.Server.Tests.Infrastructure;
 using Npgsql;
 
@@ -25,7 +26,8 @@ public sealed class EphemeralStateCleanupTests(DatabaseFixture database)
         }
         var failure = new FailFirstPrune();
         await using var services = new ServiceCollection().AddScoped(_ => database.CreateContext(failure))
-            .AddScoped<EphemeralStateCleanup>().BuildServiceProvider();
+            .AddScoped<EphemeralStateCleanup>().AddScoped<BlobCollector>()
+            .AddSingleton(Microsoft.Extensions.Options.Options.Create(new BlobStorageOptions())).BuildServiceProvider();
         var clock = new ManualClock();
         var log = new FailureLog();
         using var worker = new EphemeralStateCleanupService(services.GetRequiredService<IServiceScopeFactory>(), log, clock);
