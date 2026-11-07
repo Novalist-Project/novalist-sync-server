@@ -7,10 +7,12 @@ using Novalist.Sync.Server.Data;
 using Novalist.Sync.Server.Hubs;
 using Novalist.Sync.Server.Relay;
 using Novalist.Sync.Server.Blobs;
+using Novalist.Sync.Server.Transport;
 
 var builder = WebApplication.CreateBuilder(args);
 
 var relayEnabled = builder.Configuration.GetValue("Relay:Enabled", false);
+builder.Services.AddTransportSecurity(builder.Configuration);
 builder.Services.AddSingleton(new RelayAuthenticationPolicy(RelayAuthentication.Required(builder.Configuration)));
 if (relayEnabled)
 {
@@ -55,6 +57,7 @@ else
     builder.Services.AddScoped<AccessRevocation>();
     builder.Services.AddSignalR(options =>
     {
+        options.AddFilter<HubCallRateFilter>();
         options.AddFilter<ClientErrorFilter>();
         options.MaximumReceiveMessageSize = 128 * 1024;
     }).AddMessagePackProtocol();
@@ -66,15 +69,22 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-if (relayEnabled) app.UseRelayTransportSecurity(app.Environment);
+app.UseTransportSecurity(app.Environment);
+if (relayEnabled) app.UseRelayRequestQuotas();
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20), KeepAliveTimeout = TimeSpan.FromSeconds(15) });
 
 if (relayEnabled) app.MapRelayEndpoints();
 else
 {
-    app.MapHub<SyncHub>(Protocol.HubPath, options => options.ApplicationMaxBufferSize = 256 * 1024);
+    app.MapHub<SyncHub>(Protocol.HubPath, options =>
+    {
+        options.ApplicationMaxBufferSize = 256 * 1024;
+        // The client reconnects with a fresh token; a connection never outlives its access token.
+        options.CloseOnAuthenticationExpiration = true;
+    });
     app.MapDeviceEndpoints();
     app.MapVerifiedDeviceEndpoints();
     app.MapDeviceEnrollmentEndpoint();

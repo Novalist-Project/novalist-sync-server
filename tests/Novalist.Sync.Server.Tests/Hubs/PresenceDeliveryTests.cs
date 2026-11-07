@@ -12,6 +12,13 @@ namespace Novalist.Sync.Server.Tests.Hubs;
 
 public sealed class PresenceDeliveryTests(DatabaseFixture database)
 {
+    // These tests register more simultaneous connections than one account may normally open.
+    private static readonly Dictionary<string, string> ManyConnections = new()
+    {
+        ["Transport:MaxConnectionsPerAccount"] = "1024",
+        ["Transport:MaxConnectionsPerIp"] = "1024"
+    };
+
     [Theory]
     [InlineData(false, true, true)]
     [InlineData(true, false, true)]
@@ -19,7 +26,7 @@ public sealed class PresenceDeliveryTests(DatabaseFixture database)
     public async Task MembershipAndEnvelopeFailuresDoNotRevealThePresenceCapacity(bool member, bool validEnvelope, bool currentEpoch)
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var server = new SyncServer(database);
+        await using var server = new SyncServer(database, settings: ManyConnections);
         var owner = await database.CreateUserAsync();
         var sender = member ? owner : await database.CreateUserAsync();
         var device = await database.CreateDeviceAsync(sender.Id);
@@ -45,7 +52,7 @@ public sealed class PresenceDeliveryTests(DatabaseFixture database)
     public async Task PresenceCountsEveryConnectionAgainstItsFanoutLimitEvenForTheSameDevice()
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var server = new SyncServer(database);
+        await using var server = new SyncServer(database, settings: ManyConnections);
         var user = await database.CreateUserAsync();
         var device = await database.CreateDeviceAsync(user.Id);
         var project = await database.CreateProjectAsync((user.Id, MembershipRole.Owner));
@@ -71,7 +78,7 @@ public sealed class PresenceDeliveryTests(DatabaseFixture database)
     {
         var ct = TestContext.Current.CancellationToken;
         using var lifetime = new SlowPresenceLifetimeManager();
-        await using var server = new SyncServer(database, lifetime: lifetime);
+        await using var server = new SyncServer(database, lifetime: lifetime, settings: ManyConnections);
         var owner = await database.CreateUserAsync();
         var guest = await database.CreateUserAsync();
         var device = await database.CreateDeviceAsync(owner.Id);

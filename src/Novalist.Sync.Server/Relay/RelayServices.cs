@@ -28,6 +28,6 @@ public static class RelayServices
         services.AddSingleton<RelayAuthorizations>();
         services.AddSingleton<RelayQuotas>();
         services.AddSingleton<RelaySessions>();
-        return services.AddRelayTransportSecurity(configuration);
+        return services;
     }
 }

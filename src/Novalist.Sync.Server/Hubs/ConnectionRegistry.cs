@@ -8,8 +8,23 @@ namespace Novalist.Sync.Server.Hubs;
 public sealed class ConnectionRegistry
 {
     private readonly ConcurrentDictionary<string, Connection> _connections = new();
+    private readonly object _admission = new();
 
-    public void Add(HubCallerContext context, Guid userId, Guid deviceId) => _connections[context.ConnectionId] = new Connection(context, userId, deviceId);
+    public void Add(HubCallerContext context, Guid userId, Guid deviceId) => _connections[context.ConnectionId] = new Connection(context, userId, deviceId, "");
+
+    // Admits the connection only while the instance, its account and its client address are under their caps.
+    public bool TryAdd(HubCallerContext context, Guid userId, Guid deviceId, string address, ConnectionLimits limits)
+    {
+        lock (_admission)
+        {
+            var open = _connections.Values.Where(c => c.Context.ConnectionId != context.ConnectionId).ToList();
+            if (open.Count >= limits.Total || open.Count(c => c.UserId == userId) >= limits.PerAccount ||
+                open.Count(c => c.Address == address) >= limits.PerAddress)
+                return false;
+            _connections[context.ConnectionId] = new Connection(context, userId, deviceId, address);
+            return true;
+        }
+    }
 
     public void Remove(string connectionId) => _connections.TryRemove(connectionId, out _);
 
@@ -82,10 +97,12 @@ public sealed class ConnectionRegistry
 
     private enum ProjectConnectionState { Joined, Revoked }
 
-    private sealed record Connection(HubCallerContext Context, Guid UserId, Guid DeviceId)
+    private sealed record Connection(HubCallerContext Context, Guid UserId, Guid DeviceId, string Address)
     {
         internal ConcurrentDictionary<Guid, ProjectConnectionState> Projects { get; } = new();
     }
 }
 
 public sealed record PresenceTarget(string ConnectionId, Guid DeviceId);
+
+public readonly record struct ConnectionLimits(int Total, int PerAccount, int PerAddress);
