@@ -798,8 +798,11 @@ first and rechecks the mark in a separate statement, so a report or upload
 that committed in the meantime keeps the blob.
 
 Clients should report after catching up, while idle, and at most daily. A
-stale client's report can only start a grace period, which the next up-to-date
-report ends. A malicious writer could make blobs collectable by omitting them
+stale client's report can only delay collection, never hasten it. It can start
+a grace period for a blob its old manifest lacks, which the next up-to-date
+report ends. It can also clear the marks of a blob its old manifest still
+references, which restarts that blob's grace period from the next omitting
+report. A malicious writer could make blobs collectable by omitting them
 from two reports a grace period apart. That is no stronger than the write
 access it already has to the manifest.
 
