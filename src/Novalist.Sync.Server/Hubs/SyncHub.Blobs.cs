@@ -18,7 +18,7 @@ public sealed partial class SyncHub
             DeviceId, blobId, chunk.Index, projectId, chunk.Ciphertext.Length);
     }
 
-    public async Task ReportBlobReferences(Guid projectId, IAsyncEnumerable<Guid> referencedBlobIds)
+    public async Task ReportBlobReferences(Guid projectId, long caughtUpToServerSeq, IAsyncEnumerable<Guid> referencedBlobIds)
     {
         var ct = Context.ConnectionAborted;
         // Check before buffering, so nonmembers cannot make the server read a large stream.
@@ -29,9 +29,9 @@ public sealed partial class SyncHub
         await using var delivery = await projects.PauseDeliveryAsync(projectId, ct);
         await EnsureDeviceActiveAsync(ct);
         await projects.EnsureCanWriteAsync(UserId, projectId, ct);
-        await blobs.ReportReferencesAsync(projectId, referenced, ct);
-        logger.LogInformation("Device {DeviceId} reported {Count} referenced blobs in project {ProjectId}.",
-            DeviceId, referenced.Length, projectId);
+        await blobs.ReportReferencesAsync(projectId, caughtUpToServerSeq, referenced, ct);
+        logger.LogInformation("Device {DeviceId} reported {Count} referenced blobs in project {ProjectId} at sequence {ServerSeq}.",
+            DeviceId, referenced.Length, projectId, caughtUpToServerSeq);
     }
 
     public async Task<BlobChunk?> DownloadBlobChunk(Guid projectId, Guid blobId, int chunkIndex)

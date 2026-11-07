@@ -4,7 +4,7 @@ public interface ISyncHub
 {
     Task UploadBlobChunk(Guid projectId, Guid blobId, BlobChunk chunk);
     Task<BlobChunk?> DownloadBlobChunk(Guid projectId, Guid blobId, int chunkIndex);
-    Task ReportBlobReferences(Guid projectId, IAsyncEnumerable<Guid> referencedBlobIds);
+    Task ReportBlobReferences(Guid projectId, long caughtUpToServerSeq, IAsyncEnumerable<Guid> referencedBlobIds);
 
     Task<ProjectEpochStatus> GetProjectEpoch(Guid projectId);
     Task RegisterProjectDevice(Guid projectId, uint epoch, byte[] certificate);

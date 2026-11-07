@@ -769,16 +769,21 @@ already-visible ciphertext sizes; it exposes no plaintext content or keys.
 ### 9.5 Blob garbage collection
 
 Only clients can read the manifest, so only they know which blobs are still in
-use. A writer (owner or contributor) streams the complete set of blob IDs its
-current manifest references to `ReportBlobReferences(projectId, stream of
-blobId)`. A report holds at most `BlobTransfer.MaximumReportedReferences`
+use. A writer (owner or contributor) that has caught up to the whole log streams
+the complete set of blob IDs its current manifest references to
+`ReportBlobReferences(projectId, caughtUpToServerSeq, stream of blobId)`. A
+report holds at most `BlobTransfer.MaximumReportedReferences`
 (100 000) distinct IDs. The server buffers the stream before taking any lock,
 then rechecks device status and membership under the account and project
 delivery barriers, like every other blob operation. Viewers cannot report.
 
 Each report is applied in one transaction, under the same project row lock as
-uploads:
+uploads and pushes:
 
+- `caughtUpToServerSeq` must equal the project's last server sequence. A
+  report behind the log is rejected as a conflict (the client catches up and
+  retries), and one beyond it as malformed. Marks are project-wide, not
+  per writer, so only reports covering the whole log may change them.
 - Reported blobs lose all marks. IDs with no stored chunks are ignored.
 - A blob the report omits gets `unreferenced_since` (if not already set).
 - A blob the report omits whose `unreferenced_since` is at least
@@ -797,13 +802,13 @@ subtracting their bytes from the project quota. It locks the project rows
 first and rechecks the mark in a separate statement, so a report or upload
 that committed in the meantime keeps the blob.
 
-Clients should report after catching up, while idle, and at most daily. A
-stale client's report can only delay collection, never hasten it. It can start
-a grace period for a blob its old manifest lacks, which the next up-to-date
-report ends. It can also clear the marks of a blob its old manifest still
-references, which restarts that blob's grace period from the next omitting
-report. A malicious writer could make blobs collectable by omitting them
-from two reports a grace period apart. That is no stronger than the write
+Clients should report after catching up, while idle, and at most daily. The
+sequence check means no stale manifest, however often it is reported, can
+start or advance a grace period. What an accepted report can miss is a manifest
+change that has not reached the server yet. Only the two-report rule protects
+that case: the omission must persist for a full grace period. A malicious
+writer can claim to be caught up and omit blobs from two reports a grace
+period apart, making them collectable. That is no stronger than the write
 access it already has to the manifest.
 
 The `blobs` table records project ID, blob ID, stored bytes and the two

@@ -31,7 +31,7 @@ public sealed class BlobCollectionTests(DatabaseFixture database)
         await store.PutAsync(project, dropped, new(0, RandomNumberGenerator.GetBytes(64)), ct);
         await store.PutAsync(project, dropped, new(1, RandomNumberGenerator.GetBytes(16)), ct);
 
-        await store.ReportReferencesAsync(project, [kept, Guid.NewGuid()], ct);
+        await store.ReportReferencesAsync(project, 0, [kept, Guid.NewGuid()], ct);
         Assert.Equal((Start, (DateTimeOffset?)null), await MarksAsync(db, project, dropped, ct));
         Assert.Equal((null, null), await MarksAsync(db, project, kept, ct));
         Assert.Equal(0, await collector.CollectAsync(ct));
@@ -41,12 +41,12 @@ public sealed class BlobCollectionTests(DatabaseFixture database)
         Assert.Equal(0, await collector.CollectAsync(ct));
 
         clock.Now = Start.AddDays(29);
-        await store.ReportReferencesAsync(project, [kept], ct);
+        await store.ReportReferencesAsync(project, 0, [kept], ct);
         Assert.Equal((Start, (DateTimeOffset?)null), await MarksAsync(db, project, dropped, ct));
         Assert.Equal(0, await collector.CollectAsync(ct));
 
         clock.Now = Start.AddDays(30);
-        await store.ReportReferencesAsync(project, [kept], ct);
+        await store.ReportReferencesAsync(project, 0, [kept], ct);
         Assert.Equal((Start, Start.AddDays(30)), await MarksAsync(db, project, dropped, ct));
         Assert.Equal(1, await collector.CollectAsync(ct));
         Assert.Equal(0, await collector.CollectAsync(ct));
@@ -69,20 +69,20 @@ public sealed class BlobCollectionTests(DatabaseFixture database)
         var store = new BlobStore(db, Options);
         var blob = Guid.NewGuid();
         await store.PutAsync(project, blob, new(0, RandomNumberGenerator.GetBytes(16)), ct);
-        await store.ReportReferencesAsync(project, [], ct);
+        await store.ReportReferencesAsync(project, 0, [], ct);
         clock.Now = Start.AddDays(31);
-        await store.ReportReferencesAsync(project, [], ct);
+        await store.ReportReferencesAsync(project, 0, [], ct);
         Assert.NotNull((await MarksAsync(db, project, blob, ct)).CollectableAt);
 
-        if (action == "report") await store.ReportReferencesAsync(project, [blob], ct);
+        if (action == "report") await store.ReportReferencesAsync(project, 0, [blob], ct);
         else await store.PutAsync(project, blob, new(1, RandomNumberGenerator.GetBytes(16)), ct);
         Assert.Equal((null, null), await MarksAsync(db, project, blob, ct));
 
         // The grace period restarts from the next omission.
         clock.Now = Start.AddDays(40);
-        await store.ReportReferencesAsync(project, [], ct);
+        await store.ReportReferencesAsync(project, 0, [], ct);
         clock.Now = Start.AddDays(69);
-        await store.ReportReferencesAsync(project, [], ct);
+        await store.ReportReferencesAsync(project, 0, [], ct);
         Assert.Equal(0, await new BlobCollector(db, Options).CollectAsync(ct));
         Assert.NotNull(await store.GetAsync(project, blob, 0, ct));
     }
@@ -99,16 +99,42 @@ public sealed class BlobCollectionTests(DatabaseFixture database)
         var blob = Guid.NewGuid();
         await store.PutAsync(first, blob, new(0, RandomNumberGenerator.GetBytes(16)), ct);
         await store.PutAsync(second, blob, new(0, RandomNumberGenerator.GetBytes(16)), ct);
-        await store.ReportReferencesAsync(first, [], ct);
+        await store.ReportReferencesAsync(first, 0, [], ct);
         clock.Now = Start.AddDays(31);
-        await store.ReportReferencesAsync(first, [], ct);
-        await store.ReportReferencesAsync(second, [], ct);
+        await store.ReportReferencesAsync(first, 0, [], ct);
+        await store.ReportReferencesAsync(second, 0, [], ct);
         Assert.Equal(1, await new BlobCollector(db, Options).CollectAsync(ct));
         Assert.Null(await store.GetAsync(first, blob, 0, ct));
         Assert.NotNull(await store.GetAsync(second, blob, 0, ct));
         Assert.Equal(16, await StoredBytesAsync(db, second, ct));
         Assert.Equal(0, await StoredBytesAsync(db, first, ct));
-        await Assert.ThrowsAsync<AccessDeniedException>(() => store.ReportReferencesAsync(Guid.NewGuid(), [], ct));
+        await Assert.ThrowsAsync<AccessDeniedException>(() => store.ReportReferencesAsync(Guid.NewGuid(), 0, [], ct));
+    }
+
+    [Fact]
+    public async Task ReportsBehindOrBeyondTheLogAreRejectedSoStaleManifestsCannotCollect()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var project = await CreateProjectAsync();
+        var clock = new DatabaseTimeOverride(Start);
+        await using var db = database.CreateContext(clock);
+        var store = new BlobStore(db, Options);
+        var blob = Guid.NewGuid();
+        await store.PutAsync(project, blob, new(0, RandomNumberGenerator.GetBytes(16)), ct);
+        await db.Projects.Where(value => value.Id == project).ExecuteUpdateAsync(set => set.SetProperty(value => value.LastServerSeq, 5L), ct);
+
+        // A client that missed the update adding this blob omits it twice, a grace period apart.
+        var error = await Assert.ThrowsAsync<ConflictException>(() => store.ReportReferencesAsync(project, 4, [], ct));
+        Assert.Contains("Catch up", error.Message);
+        clock.Now = Start.AddDays(31);
+        await Assert.ThrowsAsync<ConflictException>(() => store.ReportReferencesAsync(project, 4, [], ct));
+        await Assert.ThrowsAsync<FormatException>(() => store.ReportReferencesAsync(project, 6, [], ct));
+        await Assert.ThrowsAsync<FormatException>(() => store.ReportReferencesAsync(project, -1, [], ct));
+        Assert.Equal((null, null), await MarksAsync(db, project, blob, ct));
+
+        await store.ReportReferencesAsync(project, 5, [], ct);
+        Assert.Equal((Start.AddDays(31), (DateTimeOffset?)null), await MarksAsync(db, project, blob, ct));
+        Assert.Equal(0, await new BlobCollector(db, Options).CollectAsync(ct));
     }
 
     [Fact]
@@ -120,9 +146,9 @@ public sealed class BlobCollectionTests(DatabaseFixture database)
         await using var db = database.CreateContext(clock);
         var store = new BlobStore(db, Options);
         for (var blob = 0; blob < 5; blob++) await store.PutAsync(project, Guid.NewGuid(), new(0, new byte[16]), ct);
-        await store.ReportReferencesAsync(project, [], ct);
+        await store.ReportReferencesAsync(project, 0, [], ct);
         clock.Now = Start.AddDays(31);
-        await store.ReportReferencesAsync(project, [], ct);
+        await store.ReportReferencesAsync(project, 0, [], ct);
         var options = Microsoft.Extensions.Options.Options.Create(new BlobStorageOptions { CollectionBatchSize = 2, CollectionMaxBatchesPerRun = 2 });
         var collector = new BlobCollector(db, options);
         Assert.Equal(4, await collector.CollectAsync(ct));
@@ -142,11 +168,11 @@ public sealed class BlobCollectionTests(DatabaseFixture database)
         {
             var setupStore = new BlobStore(setup, Options);
             await setupStore.PutAsync(project, blob, new(0, RandomNumberGenerator.GetBytes(16)), ct);
-            await setupStore.ReportReferencesAsync(project, [], ct);
+            await setupStore.ReportReferencesAsync(project, 0, [], ct);
         }
         await using (var setup = database.CreateContext(new DatabaseTimeOverride(Start)))
         {
-            await new BlobStore(setup, Options).ReportReferencesAsync(project, [], ct);
+            await new BlobStore(setup, Options).ReportReferencesAsync(project, 0, [], ct);
             Assert.NotNull((await MarksAsync(setup, project, blob, ct)).CollectableAt);
         }
 
@@ -157,7 +183,7 @@ public sealed class BlobCollectionTests(DatabaseFixture database)
         var process = ((NpgsqlConnection)collecting.Database.GetDbConnection()).ProcessID;
         var store = new BlobStore(referencing, Options);
         var reference = action == "report"
-            ? store.ReportReferencesAsync(project, [blob], ct)
+            ? store.ReportReferencesAsync(project, 0, [blob], ct)
             : store.PutAsync(project, blob, new(1, RandomNumberGenerator.GetBytes(16)), ct);
         Task<int> collection;
         try

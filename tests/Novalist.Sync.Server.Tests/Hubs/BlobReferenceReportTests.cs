@@ -70,6 +70,9 @@ public sealed class BlobReferenceReportTests(DatabaseFixture database)
         await Assert.ThrowsAsync<HubException>(() => ReportAsync(writer, other, [], ct));
         var error = await Assert.ThrowsAsync<HubException>(() => ReportAsync(writer, project, [blob, Guid.Empty], ct));
         Assert.Contains("nonempty", error.Message);
+        var beyond = await Assert.ThrowsAsync<HubException>(() =>
+            writer.InvokeAsync(nameof(ISyncHub.ReportBlobReferences), project, 1L, Stream([]), ct));
+        Assert.Contains("beyond the project log", beyond.Message);
 
         await using var db = database.CreateContext();
         Assert.Null(await db.Blobs.Where(value => value.ProjectId == project).Select(value => value.UnreferencedSince).SingleAsync(ct));
@@ -110,7 +113,7 @@ public sealed class BlobReferenceReportTests(DatabaseFixture database)
         hub.InvokeAsync(nameof(ISyncHub.UploadBlobChunk), project, blob, chunk, ct);
 
     private static Task ReportAsync(HubConnection hub, Guid project, Guid[] referenced, CancellationToken ct) =>
-        hub.InvokeAsync(nameof(ISyncHub.ReportBlobReferences), project, Stream(referenced), ct);
+        hub.InvokeAsync(nameof(ISyncHub.ReportBlobReferences), project, 0L, Stream(referenced), ct);
 
     private static async IAsyncEnumerable<Guid> Stream(Guid[] ids)
     {

@@ -62,12 +62,19 @@ public sealed class BlobStore(SyncDbContext db, IOptions<BlobStorageOptions> opt
 
     // Applies one complete report: reported blobs lose their marks, omitted blobs are marked unreferenced,
     // and blobs already omitted by a report at least one grace period earlier become collectable.
-    // IDs of blobs that have no chunks yet are ignored.
-    internal async Task ReportReferencesAsync(Guid projectId, Guid[] referencedBlobIds, CancellationToken ct)
+    // IDs of blobs that have no chunks yet are ignored. Only reports from clients that have caught up to
+    // the whole log count: marks are project-wide, so a stale manifest must never advance them.
+    internal async Task ReportReferencesAsync(Guid projectId, long caughtUpToServerSeq, Guid[] referencedBlobIds, CancellationToken ct)
     {
+        if (caughtUpToServerSeq < 0) throw new FormatException("The caught-up server sequence must be nonnegative.");
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        _ = await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {projectId} FOR NO KEY UPDATE")
+        // Pushes advance last_server_seq under this row lock, so the comparison holds until commit.
+        var project = await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {projectId} FOR NO KEY UPDATE")
             .AsNoTracking().SingleOrDefaultAsync(ct) ?? throw new AccessDeniedException("The project is not available.");
+        if (caughtUpToServerSeq > project.LastServerSeq)
+            throw new FormatException("The caught-up server sequence is beyond the project log.");
+        if (caughtUpToServerSeq < project.LastServerSeq)
+            throw new ConflictException("Catch up to the latest server sequence before reporting blob references.");
         var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(ct);
         var cutoff = now - options.Value.UnreferencedGracePeriod;
         await db.Database.ExecuteSqlInterpolatedAsync($"""
