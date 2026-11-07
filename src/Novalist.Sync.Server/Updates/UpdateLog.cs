@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Access;
@@ -6,7 +5,7 @@ using Novalist.Sync.Server.Data;
 
 namespace Novalist.Sync.Server.Updates;
 
-public sealed class UpdateLog(SyncDbContext db)
+public sealed partial class UpdateLog(SyncDbContext db)
 {
     public async Task<long> AppendAsync(Guid userId, Envelope envelope, CancellationToken cancellationToken)
     {
@@ -36,10 +35,14 @@ public sealed class UpdateLog(SyncDbContext db)
         if (duplicate is { } previous) return previous;
         if (project.CurrentEpoch != epoch)
             throw new PushRejectedException("The update epoch is no longer current. Refresh the project encryption keys.");
-        if (await db.ProjectEpochStages.FromSqlInterpolated($"""
+        // Lock even apparently expired rows: staging may be renewing them in another transaction.
+        var stages = await db.ProjectEpochStages.FromSqlInterpolated($"""
             SELECT * FROM project_epoch_stages WHERE project_id = {header.ProjectId} AND previous_epoch = {epoch}
-                AND created_at > clock_timestamp() - {ProjectEpochAccess.ReservationLifetime}
-            """).AnyAsync(cancellationToken))
+            FOR UPDATE
+            """).AsNoTracking().ToListAsync(cancellationToken);
+        var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(cancellationToken);
+        if (stages.Any(stage => stage.LastActivityAt > now - ProjectEpochAccess.ReservationLifetime &&
+            stage.CreatedAt > now - ProjectEpochAccess.ReservationMaxLifetime))
             throw new PushRejectedException("Project key rotation is in progress. Retry after the rotation finishes.");
 
         var owner = (int)MembershipRole.Owner;
@@ -83,50 +86,5 @@ public sealed class UpdateLog(SyncDbContext db)
             : throw new PushRejectedException($"No write access to project {header.ProjectId}.");
         if (transaction is not null) await transaction.CommitAsync(cancellationToken);
         return sequence;
-    }
-
-    internal async Task<long?> FindDuplicateAsync(EnvelopeHeader header, long senderSeq, Envelope envelope,
-        CancellationToken cancellationToken)
-    {
-        var existing = await db.Updates
-            .AsNoTracking()
-            .Where(u => u.ProjectId == header.ProjectId
-                        && u.SenderDeviceId == header.SenderDeviceId
-                        && u.SenderSeq == senderSeq)
-            .Select(u => new { u.ServerSeq, u.Header, u.Nonce, u.Ciphertext, u.Signature })
-            .SingleOrDefaultAsync(cancellationToken);
-
-        if (existing is null) return null;
-
-        var identical = existing.Header.AsSpan().SequenceEqual(envelope.Header)
-                        && existing.Nonce.AsSpan().SequenceEqual(envelope.Nonce)
-                        && existing.Ciphertext.AsSpan().SequenceEqual(envelope.Ciphertext)
-                        && existing.Signature.AsSpan().SequenceEqual(envelope.Signature);
-
-        return identical
-            ? existing.ServerSeq
-            : throw new PushRejectedException(
-                $"senderSeq {senderSeq} of device {header.SenderDeviceId} was already used for a different update.");
-    }
-
-    public async IAsyncEnumerable<SequencedEnvelope> ReadAfterAsync(
-        Guid projectId,
-        long afterServerSeq,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        while (true)
-        {
-            var batch = await db.Updates.AsNoTracking()
-                .Where(u => u.ProjectId == projectId && u.ServerSeq > afterServerSeq)
-                .OrderBy(u => u.ServerSeq).Take(128)
-                .Select(u => new SequencedEnvelope(u.ServerSeq, new Envelope(u.Header, u.Nonce, u.Ciphertext, u.Signature)))
-                .ToListAsync(cancellationToken);
-            foreach (var update in batch)
-            {
-                afterServerSeq = update.ServerSeq;
-                yield return update;
-            }
-            if (batch.Count < 128) yield break;
-        }
     }
 }

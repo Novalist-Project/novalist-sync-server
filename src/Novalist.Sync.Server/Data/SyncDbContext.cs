@@ -9,6 +9,7 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
     public DbSet<Project> Projects => Set<Project>();
     public DbSet<Membership> Memberships => Set<Membership>();
     public DbSet<StoredUpdate> Updates => Set<StoredUpdate>();
+    public DbSet<UpdateReceipt> UpdateReceipts => Set<UpdateReceipt>();
     public DbSet<Invitation> Invitations => Set<Invitation>();
     public DbSet<FieldLease> FieldLeases => Set<FieldLease>();
     public DbSet<FieldLeaseAttempt> FieldLeaseAttempts => Set<FieldLeaseAttempt>();
@@ -17,9 +18,17 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
     public DbSet<ProjectEpochEnvelope> ProjectEpochEnvelopes => Set<ProjectEpochEnvelope>();
     public DbSet<ProjectEpochKeyGrant> ProjectEpochKeyGrants => Set<ProjectEpochKeyGrant>();
     public DbSet<ProjectEpochDeviceGrant> ProjectEpochDeviceGrants => Set<ProjectEpochDeviceGrant>();
+    public DbSet<ProjectHistoryBoundary> ProjectHistoryBoundaries => Set<ProjectHistoryBoundary>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        ConfigureHistory(modelBuilder);
+        modelBuilder.Entity<UpdateReceipt>(entry =>
+        {
+            entry.HasKey(value => new { value.ProjectId, value.SenderDeviceId, value.SenderSeq });
+            entry.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
+            entry.HasOne<Device>().WithMany().HasForeignKey(value => value.SenderDeviceId).OnDelete(DeleteBehavior.Restrict);
+        });
         modelBuilder.Entity<ProjectEpochDeviceGrant>(entry =>
         {
             entry.HasKey(value => new { value.RotationId, value.DeviceId });
@@ -34,6 +43,8 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
         modelBuilder.Entity<ProjectEpochStage>(entry =>
         {
             entry.HasIndex(value => value.CreatedAt);
+            entry.HasIndex(value => value.LastActivityAt);
+            entry.Property(value => value.LastActivityAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entry.Property(value => value.Id).ValueGeneratedNever();
             entry.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
         });
@@ -64,11 +75,6 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
             device.HasIndex(d => d.ReceivingPublicKey).IsUnique();
         });
 
-        modelBuilder.Entity<Project>(project =>
-        {
-            project.Property(p => p.Id).ValueGeneratedNever();
-        });
-
         modelBuilder.Entity<Membership>(membership =>
         {
             membership.HasKey(m => new { m.ProjectId, m.UserId });
@@ -94,6 +100,21 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
                 .OnDelete(DeleteBehavior.Restrict);
             invitation.HasOne<Device>().WithMany().HasForeignKey(i => i.ActivatedDeviceId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+    }
+
+    private static void ConfigureHistory(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Project>(project =>
+        {
+            project.Property(p => p.Id).ValueGeneratedNever();
+            project.ToTable(table => table.HasCheckConstraint("ck_projects_history_starts_at", "history_starts_at >= 1"));
+        });
+        modelBuilder.Entity<ProjectHistoryBoundary>(entry =>
+        {
+            entry.HasKey(value => new { value.ProjectId, value.FirstServerSeq });
+            entry.HasIndex(value => value.CreatedAt);
+            entry.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
         });
     }
 

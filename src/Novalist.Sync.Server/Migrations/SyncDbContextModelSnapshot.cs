@@ -59,12 +59,19 @@ namespace Novalist.Sync.Server.Migrations
                     b.HasKey("Id")
                         .HasName("pk_devices");
 
+                    b.HasIndex("LinkedByDeviceId")
+                        .HasDatabaseName("ix_devices_linked_by_device_id");
+
+                    b.HasIndex("ReceivingPublicKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_devices_receiving_public_key");
+
+                    b.HasIndex("SigningPublicKey")
+                        .IsUnique()
+                        .HasDatabaseName("ix_devices_signing_public_key");
+
                     b.HasIndex("UserId")
                         .HasDatabaseName("ix_devices_user_id");
-
-                    b.HasIndex("SigningPublicKey").IsUnique().HasDatabaseName("ix_devices_signing_public_key");
-                    b.HasIndex("LinkedByDeviceId").HasDatabaseName("ix_devices_linked_by_device_id");
-                    b.HasIndex("ReceivingPublicKey").IsUnique().HasDatabaseName("ix_devices_receiving_public_key");
 
                     b.ToTable("devices", (string)null);
                 });
@@ -216,6 +223,10 @@ namespace Novalist.Sync.Server.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("epoch_started_at");
 
+                    b.Property<long>("HistoryStartsAt")
+                        .HasColumnType("bigint")
+                        .HasColumnName("history_starts_at");
+
                     b.Property<long>("LastServerSeq")
                         .HasColumnType("bigint")
                         .HasColumnName("last_server_seq");
@@ -223,7 +234,10 @@ namespace Novalist.Sync.Server.Migrations
                     b.HasKey("Id")
                         .HasName("pk_projects");
 
-                    b.ToTable("projects", (string)null);
+                    b.ToTable("projects", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_projects_history_starts_at", "history_starts_at >= 1");
+                        });
                 });
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.ProjectDeviceAuthorization", b =>
@@ -360,6 +374,12 @@ namespace Novalist.Sync.Server.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("device_id");
 
+                    b.Property<DateTimeOffset>("LastActivityAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_activity_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
+
                     b.Property<long>("PreviousEpoch")
                         .HasColumnType("bigint")
                         .HasColumnName("previous_epoch");
@@ -375,12 +395,39 @@ namespace Novalist.Sync.Server.Migrations
                     b.HasKey("Id")
                         .HasName("pk_project_epoch_stages");
 
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("ix_project_epoch_stages_created_at");
+
+                    b.HasIndex("LastActivityAt")
+                        .HasDatabaseName("ix_project_epoch_stages_last_activity_at");
+
                     b.HasIndex("ProjectId")
                         .HasDatabaseName("ix_project_epoch_stages_project_id");
 
-                    b.HasIndex("CreatedAt").HasDatabaseName("ix_project_epoch_stages_created_at");
-
                     b.ToTable("project_epoch_stages", (string)null);
+                });
+
+            modelBuilder.Entity("Novalist.Sync.Server.Data.ProjectHistoryBoundary", b =>
+                {
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("project_id");
+
+                    b.Property<long>("FirstServerSeq")
+                        .HasColumnType("bigint")
+                        .HasColumnName("first_server_seq");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.HasKey("ProjectId", "FirstServerSeq")
+                        .HasName("pk_project_history_boundaries");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("ix_project_history_boundaries_created_at");
+
+                    b.ToTable("project_history_boundaries", (string)null);
                 });
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.StoredUpdate", b =>
@@ -446,6 +493,53 @@ namespace Novalist.Sync.Server.Migrations
                     b.ToTable("updates", (string)null);
                 });
 
+            modelBuilder.Entity("Novalist.Sync.Server.Data.UpdateReceipt", b =>
+                {
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("project_id");
+
+                    b.Property<Guid>("SenderDeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("sender_device_id");
+
+                    b.Property<long>("SenderSeq")
+                        .HasColumnType("bigint")
+                        .HasColumnName("sender_seq");
+
+                    b.Property<byte[]>("CiphertextHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("ciphertext_hash");
+
+                    b.Property<byte[]>("HeaderHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("header_hash");
+
+                    b.Property<byte[]>("NonceHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("nonce_hash");
+
+                    b.Property<long>("ServerSeq")
+                        .HasColumnType("bigint")
+                        .HasColumnName("server_seq");
+
+                    b.Property<byte[]>("SignatureHash")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("signature_hash");
+
+                    b.HasKey("ProjectId", "SenderDeviceId", "SenderSeq")
+                        .HasName("pk_update_receipts");
+
+                    b.HasIndex("SenderDeviceId")
+                        .HasDatabaseName("ix_update_receipts_sender_device_id");
+
+                    b.ToTable("update_receipts", (string)null);
+                });
+
             modelBuilder.Entity("Novalist.Sync.Server.Data.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -486,14 +580,18 @@ namespace Novalist.Sync.Server.Migrations
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.Device", b =>
                 {
+                    b.HasOne("Novalist.Sync.Server.Data.Device", null)
+                        .WithMany()
+                        .HasForeignKey("LinkedByDeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("fk_devices_devices_linked_by_device_id");
+
                     b.HasOne("Novalist.Sync.Server.Data.User", null)
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_devices_users_user_id");
-                    b.HasOne("Novalist.Sync.Server.Data.Device", null).WithMany().HasForeignKey("LinkedByDeviceId")
-                        .OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_devices_devices_linked_by_device_id");
                 });
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.FieldLease", b =>
@@ -626,6 +724,16 @@ namespace Novalist.Sync.Server.Migrations
                         .HasConstraintName("fk_project_epoch_stages_projects_project_id");
                 });
 
+            modelBuilder.Entity("Novalist.Sync.Server.Data.ProjectHistoryBoundary", b =>
+                {
+                    b.HasOne("Novalist.Sync.Server.Data.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_project_history_boundaries_projects_project_id");
+                });
+
             modelBuilder.Entity("Novalist.Sync.Server.Data.StoredUpdate", b =>
                 {
                     b.HasOne("Novalist.Sync.Server.Data.Project", null)
@@ -641,6 +749,23 @@ namespace Novalist.Sync.Server.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("fk_updates_devices_sender_device_id");
+                });
+
+            modelBuilder.Entity("Novalist.Sync.Server.Data.UpdateReceipt", b =>
+                {
+                    b.HasOne("Novalist.Sync.Server.Data.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_update_receipts_projects_project_id");
+
+                    b.HasOne("Novalist.Sync.Server.Data.Device", null)
+                        .WithMany()
+                        .HasForeignKey("SenderDeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_update_receipts_devices_sender_device_id");
                 });
 #pragma warning restore 612, 618
         }

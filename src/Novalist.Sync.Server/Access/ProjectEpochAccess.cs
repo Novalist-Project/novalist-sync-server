@@ -1,14 +1,30 @@
+using System.Linq.Expressions;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.EntityFrameworkCore;
 using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Data;
 
 namespace Novalist.Sync.Server.Access;
 
-public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess projects)
+public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess projects, ILogger<ProjectEpochAccess>? logger = null)
 {
+    // A reservation stays alive while the owner keeps staging; it expires after this long without activity.
     public static readonly TimeSpan ReservationLifetime = TimeSpan.FromMinutes(2);
+    // Upper bound for one rotation, however active, so pushes are never blocked indefinitely.
+    public static readonly TimeSpan ReservationMaxLifetime = TimeSpan.FromMinutes(30);
+    private readonly ILogger<ProjectEpochAccess> log = logger ?? NullLogger<ProjectEpochAccess>.Instance;
+
+    internal static Expression<Func<ProjectEpochStage, bool>> ExpiredAt(DateTimeOffset now)
+    {
+        var idleSince = now - ReservationLifetime;
+        var startedBefore = now - ReservationMaxLifetime;
+        return stage => stage.LastActivityAt <= idleSince || stage.CreatedAt <= startedBefore;
+    }
+
+    private static bool IsExpired(ProjectEpochStage stage, DateTimeOffset now) =>
+        stage.LastActivityAt <= now - ReservationLifetime || stage.CreatedAt <= now - ReservationMaxLifetime;
 
     public async Task<ProjectEpochStatus> StatusAsync(Guid user, Guid project, CancellationToken ct)
     {
@@ -67,12 +83,12 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
         await projects.EnsureIsOwnerAsync(user, request.ProjectId, ct);
         CheckBoundary(project, request.PreviousEpoch, request.PreviousServerSeq);
         var now = await DatabaseTimeAsync(ct);
-        await db.ProjectEpochStages.Where(value => value.ProjectId == request.ProjectId && value.CreatedAt <= now - ReservationLifetime).ExecuteDeleteAsync(ct);
+        await db.ProjectEpochStages.Where(value => value.ProjectId == request.ProjectId).Where(ExpiredAt(now)).ExecuteDeleteAsync(ct);
         await EnsureReservationAvailableAsync(request.ProjectId, request.RotationId, ct);
         await db.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO project_epoch_stages (id, project_id, device_id, previous_epoch, previous_server_seq, created_at, count)
+            INSERT INTO project_epoch_stages (id, project_id, device_id, previous_epoch, previous_server_seq, created_at, last_activity_at, count)
             VALUES ({request.RotationId}, {request.ProjectId}, {device}, {(long)request.PreviousEpoch},
-                {request.PreviousServerSeq}, {now}, 0)
+                {request.PreviousServerSeq}, {now}, {now}, 0)
             ON CONFLICT (id) DO NOTHING
             """, ct);
         var stage = await db.ProjectEpochStages.AsNoTracking().SingleAsync(value => value.Id == request.RotationId, ct);
@@ -90,7 +106,7 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
             throw new FormatException("Invalid staged checkpoint envelope.");
         await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
         await EnsureDeviceAsync(user, device, ct);
-        var stage = await LockStageAsync(rotation, device, ct);
+        var stage = await LockStageForUploadAsync(rotation, device, ct);
         await projects.EnsureIsOwnerAsync(user, stage.ProjectId, ct);
         if (header.ProjectId != stage.ProjectId || header.Epoch != stage.PreviousEpoch + 1)
             throw new ConflictException("The checkpoint belongs to another transition.");
@@ -99,6 +115,7 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
         if (existing is not null)
         {
             if (!existing.Payload.AsSpan().SequenceEqual(payload)) throw new ConflictException("The staged sender sequence was reused.");
+            await transaction.CommitAsync(ct);
             return existing.Index;
         }
         db.ProjectEpochEnvelopes.Add(new() { RotationId = rotation, Index = ++stage.Count, SenderSeq = (long)header.SenderSeq, Payload = payload });
@@ -121,12 +138,24 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
         (await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {project} FOR UPDATE").AsNoTracking().ToListAsync(ct)).SingleOrDefault()
         ?? throw new AccessDeniedException("The shared project is unavailable.");
 
-    private async Task<ProjectEpochStage> LockStageAsync(Guid rotation, Guid device, CancellationToken ct)
+    private async Task<ProjectEpochStage> LockStageForUploadAsync(Guid rotation, Guid device, CancellationToken ct)
+    {
+        var projectId = await db.ProjectEpochStages.AsNoTracking().Where(stage => stage.Id == rotation)
+            .Select(stage => (Guid?)stage.ProjectId).SingleOrDefaultAsync(ct)
+            ?? throw new ConflictException("The project transition is unavailable.");
+        // A second stage update can recheck the project FK; take its lock before the stage lock.
+        await LockProjectAsync(projectId, ct);
+        return await LockStageAsync(rotation, device, ct, projectId);
+    }
+
+    private async Task<ProjectEpochStage> LockStageAsync(Guid rotation, Guid device, CancellationToken ct, Guid? expectedProject = null)
     {
         var stage = (await db.ProjectEpochStages.FromSqlInterpolated($"SELECT * FROM project_epoch_stages WHERE id = {rotation} FOR UPDATE").ToListAsync(ct)).SingleOrDefault();
         var now = await DatabaseTimeAsync(ct);
-        if (stage is null || stage.DeviceId != device || stage.CreatedAt <= now - ReservationLifetime)
+        if (stage is null || stage.DeviceId != device || (expectedProject.HasValue && stage.ProjectId != expectedProject) || IsExpired(stage, now))
             throw new ConflictException("The project transition is unavailable or expired.");
+        stage.LastActivityAt = now;
+        await db.SaveChangesAsync(ct);
         return stage;
     }
 

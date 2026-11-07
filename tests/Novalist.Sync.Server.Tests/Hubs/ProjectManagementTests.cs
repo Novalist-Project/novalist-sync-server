@@ -111,6 +111,44 @@ public sealed class ProjectManagementTests(DatabaseFixture database)
     }
 
     [Fact]
+    public async Task CatchUpRejectsPositionsBeforeTheHistoryBoundaryThroughTheHub()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = new SyncServer(database);
+        await using var owner = await ConnectAsync(server, ct);
+        var project = await database.CreateProjectAsync((owner.UserId, MembershipRole.Owner));
+        await owner.Hub.InvokeAsync("RegisterProjectDevice", project, 0U, RandomNumberGenerator.GetBytes(182), ct);
+        for (ulong seq = 1; seq <= 3; seq++)
+            Assert.Equal((long)seq, await owner.Hub.InvokeAsync<long>("Push", TestData.Envelope(project, owner.DeviceId, seq), ct));
+        var rotation = Guid.NewGuid();
+        Assert.Equal(new ProjectEpochStatus(0, 3),
+            await owner.Hub.InvokeAsync<ProjectEpochStatus>("ReserveProjectEpoch", project, rotation, ct));
+        var checkpoint = Rotations.Update(project, owner.DeviceId, 4, 1);
+        await owner.Hub.InvokeAsync<long>("StageProjectEpoch", rotation, checkpoint, ct);
+        await owner.Hub.InvokeAsync("CommitProjectEpoch", new CommitProjectEpoch(rotation, null,
+            [new(owner.DeviceId, RandomNumberGenerator.GetBytes(182), RandomNumberGenerator.GetBytes(128))]), ct);
+        var next = Rotations.Update(project, owner.DeviceId, 5, 1);
+        Assert.Equal(5, await owner.Hub.InvokeAsync<long>("Push", next, ct));
+        await using (var db = database.CreateContext())
+            Assert.Equal(5, await db.Updates.CountAsync(update => update.ProjectId == project, ct));
+
+        foreach (var stale in new long[] { 0, 1, 2 })
+        {
+            await using var stream = owner.Hub.StreamAsync<SequencedEnvelope>("CatchUp", project, stale, ct).GetAsyncEnumerator(ct);
+            var error = await Assert.ThrowsAsync<HubException>(async () => await stream.MoveNextAsync());
+            Assert.Contains("history before update 4 was replaced by a checkpoint", error.Message, StringComparison.Ordinal);
+            Assert.Contains("Refresh the project keys to continue", error.Message, StringComparison.Ordinal);
+        }
+
+        var caughtUp = await owner.Hub.StreamAsync<SequencedEnvelope>("CatchUp", project, 3L, ct).ToListAsync(ct);
+        Assert.Equal(new[] { 4L, 5L }, caughtUp.Select(update => update.ServerSeq));
+        Assert.Equal(checkpoint.Ciphertext, caughtUp[0].Envelope.Ciphertext);
+        Assert.Equal(next.Ciphertext, caughtUp[1].Envelope.Ciphertext);
+        Assert.Empty(await owner.Hub.StreamAsync<SequencedEnvelope>("CatchUp", project, 5L, ct).ToListAsync(ct));
+        Assert.Equal(HubConnectionState.Connected, owner.Hub.State);
+    }
+
+    [Fact]
     public async Task VerifiedOwnerCanReserveAndCancelFromAnotherDeviceWhileOtherCallersCannot()
     {
         var ct = TestContext.Current.CancellationToken;
