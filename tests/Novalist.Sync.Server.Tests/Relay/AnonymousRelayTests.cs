@@ -6,6 +6,7 @@ using System.Text;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Options;
+using Novalist.Sync.Server.Tests.Infrastructure;
 
 namespace Novalist.Sync.Server.Tests.Relay;
 
@@ -36,14 +37,9 @@ public sealed class AnonymousRelayTests
     [InlineData(true)]
     public async Task AnonymousRelaySettingDoesNotDisableLegacyAuthentication(bool explicitDefault)
     {
-        await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Production");
-            if (explicitDefault) builder.UseSetting("Relay:Enabled", "false");
-            builder.UseSetting("ConnectionStrings:Default", "Host=unused;Database=unused;Username=unused");
-            builder.UseSetting("Relay:RequireAuthentication", "false");
-        });
-        Assert.Throws<OptionsValidationException>(() => server.CreateClient());
+        var settings = new Dictionary<string, string?> { ["Relay:RequireAuthentication"] = "false" };
+        if (explicitDefault) settings["Relay:Enabled"] = "false";
+        await LoginConfigurationHost.StartFailureAsync("Production", settings);
     }
 
     [Theory]
