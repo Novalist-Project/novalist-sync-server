@@ -62,6 +62,7 @@ public sealed partial class ProjectEpochAccess
             await db.ProjectDeviceAuthorizations.Where(value => value.ProjectId == project.Id && db.Devices.Any(d => d.Id == value.DeviceId && d.UserId == memberId)).ExecuteDeleteAsync(ct);
         }
         await db.Invitations.Where(value => value.ProjectId == project.Id).ExecuteUpdateAsync(set => set.SetProperty(value => value.ExpiresAt, DateTimeOffset.UnixEpoch), ct);
+        await db.FieldLeases.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
         await db.SaveChangesAsync(ct);
         await db.ProjectEpochStages.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
         await transaction.CommitAsync(ct);

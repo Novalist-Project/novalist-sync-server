@@ -10,6 +10,8 @@ the minor version.
 
 ### Added
 
+- Contracts 1.7.0: Field leases: acquire, renew, release and guarded encrypted edits. Grants include server time and catch-up boundaries; fixed acquisition deadlines prevent delayed retries from reviving expired focus. New methods and records are additive.
+
 - Contracts 1.6.0: Epoch rotation: verified project-device certificates, staged checkpoints and opaque key grants, reservations, cancellation, compare-and-set commit, and `ProjectEpochChanged`. `CommitProjectEpoch.RemovedMemberId` may be omitted or null to rotate without removing a member, including after device revocation. New methods and records are additive.
 
 - Contracts 1.5.0: Presence: transient encrypted `PublishPresence` and `ReceivePresence` messages. Delivery rechecks account, device and membership without persisting payloads or holding database locks across network sends.

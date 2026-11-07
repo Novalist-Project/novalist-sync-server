@@ -24,6 +24,9 @@ public sealed class ProjectEpochRotationTests(DatabaseFixture database)
             db.ProjectDeviceAuthorizations.Add(new() { ProjectId = project, DeviceId = id, Epoch = 0, Certificate = new byte[182] });
         await db.SaveChangesAsync(ct);
         await new DeviceRegistry(db, database.DeliveryGate).RevokeAsync(member.Id, stolenDevice, ct);
+        var leases = new FieldLeaseAccess(db, new(db, database.DeliveryGate), new(db));
+        await leases.AcquireAsync(member.Id, memberDevice,
+            new(project, Guid.NewGuid(), 0, Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(1)), ct);
         var service = new ProjectEpochAccess(db, new(db, database.DeliveryGate));
         var rotation = Guid.NewGuid();
         await service.ReserveAsync(owner.Id, device, project, rotation, ct);
@@ -49,5 +52,6 @@ public sealed class ProjectEpochRotationTests(DatabaseFixture database)
         await Assert.ThrowsAsync<AccessDeniedException>(() => service.ReadGrantAsync(member.Id, stolenDevice, project, 0, ct));
         Assert.All(await service.DevicesAsync(owner.Id, project, ct), value => Assert.Equal(1U, value.Epoch));
         Assert.False(await db.ProjectEpochStages.AnyAsync(value => value.ProjectId == project, ct));
+        Assert.False(await db.FieldLeases.AnyAsync(value => value.ProjectId == project, ct));
     }
 }

@@ -20,7 +20,7 @@ public sealed class EphemeralStateCleanupTests(DatabaseFixture database)
         var project = await database.CreateProjectAsync((user.Id, Novalist.Sync.Server.Data.MembershipRole.Owner));
         await using (var db = database.CreateContext())
         {
-            db.ProjectEpochStages.Add(new() { Id = Guid.NewGuid(), ProjectId = project, DeviceId = device, CreatedAt = DateTimeOffset.UnixEpoch });
+            db.FieldLeaseAttempts.Add(new() { ProjectId = project, DeviceId = device, LeaseId = Guid.NewGuid(), ExpiresAt = DateTimeOffset.UnixEpoch });
             await db.SaveChangesAsync(ct);
         }
         var failure = new FailFirstPrune();
@@ -40,7 +40,7 @@ public sealed class EphemeralStateCleanupTests(DatabaseFixture database)
             timer.Tick();
             await failure.Completed.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
             await using var db = database.CreateContext();
-            Assert.Empty(await db.ProjectEpochStages.Where(attempt => attempt.ProjectId == project).ToListAsync(ct));
+            Assert.Empty(await db.FieldLeaseAttempts.Where(attempt => attempt.ProjectId == project).ToListAsync(ct));
             Assert.False(worker.ExecuteTask.IsCompleted);
         }
         finally { await worker.StopAsync(ct); }
@@ -55,7 +55,7 @@ public sealed class EphemeralStateCleanupTests(DatabaseFixture database)
         public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(DbCommand command, CommandEventData eventData,
             InterceptionResult<int> result, CancellationToken cancellationToken = default)
         {
-            if (command.CommandText.Contains("DELETE FROM project_epoch_stages", StringComparison.Ordinal) && Interlocked.Increment(ref attempts) == 1)
+            if (command.CommandText.Contains("DELETE FROM field_lease_attempts", StringComparison.Ordinal) && Interlocked.Increment(ref attempts) == 1)
                 throw new NpgsqlException("Temporary cleanup failure: opaque-payload-sentinel.");
             return ValueTask.FromResult(result);
         }

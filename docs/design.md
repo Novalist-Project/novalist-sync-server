@@ -672,6 +672,8 @@ MIME types and keys are only visible inside the encrypted manifest.
 | `projects`     | projectId, current epoch, epoch start time                     | yes              |
 | `memberships`  | projectId, userId, role (owner, contributor, viewer)           | yes              |
 | `invitations` | invitationId, projectId, expiry, claimant account/device, opaque certificate fingerprint | metadata; no keys |
+| `field_leases` | projectId, opaque resourceId, holder deviceId, leaseId, epoch, expiry | metadata; no field names or values |
+| `field_lease_attempts` | projectId, deviceId, attempted leaseId, acquisition deadline | temporary metadata |
 | `project_device_authorizations` | projectId, deviceId, epoch, public certificate | public certificate only |
 | `project_epoch_stages` | rotationId, projectId, initiating deviceId, prior epoch/sequence, count, creation time | yes |
 | `project_epoch_envelopes` | rotationId, index, senderSeq, opaque checkpoint envelope | envelope header only |
@@ -683,14 +685,16 @@ MIME types and keys are only visible inside the encrypted manifest.
 | `blob_chunks`  | blobId, index, ciphertext                                      | no               |
 
 Visible metadata: project and item counts, member lists, devices, timestamps,
-edit frequency per item, sizes, invitation expiry and claimant identities, epoch-transition boundaries.
+edit frequency per item, sizes, invitation expiry and claimant identities,
+opaque field-focus identifiers and timing, and epoch-transition boundaries.
 
 Verified owner connections can list project members using `ListProjectMembers`.
 The response contains the existing account UUID, the stable string role
 (`Owner`, `Contributor` or `Viewer`) and username (or verified
 email when no nonblank username exists, otherwise the account UUID).
-`RemoveProjectMember` removes access and expires all unused project invitations.
-`DeleteProject` removes memberships, invitations and updates;
+`RemoveProjectMember` removes access and the
+account's field leases and expires all unused project invitations.
+`DeleteProject` removes memberships, invitations, updates and field lease data;
 the empty project row remains as an identifier tombstone. Both operations remove
 affected connections from live delivery and send `ProjectAccessEnded(projectId)`.
 Registered encrypted projects require `CommitProjectEpoch` for member removal.
@@ -715,7 +719,7 @@ reservation if the deadline expires. Transitions then stage opaque checkpoint
 envelopes and individual opaque grants.
 The database atomically compares the previous epoch and last committed sequence,
 assigns checkpoint sequences through the normal log allocator, optionally removes
-the chosen membership, retires all invitations and publishes grants only to
+the chosen membership, retires all invitations, clears leases and publishes grants only to
 remaining active registered devices. `CommitProjectEpoch.RemovedMemberId` may be
 omitted or null to rotate without removing a member, for example after revoking
 a stolen device or for periodic rotation. Revoke a stolen device before rotating;
@@ -729,6 +733,49 @@ boundary. Public metadata adds rotation IDs, device certificates, previous epoch
 checkpoint boundary sequences, envelope/grant sizes and staging timestamps.
 The server never decrypts grants or checkpoint envelopes; clients verify the
 signature, pinned owner, recipient, monotonic epoch and checkpoint hash.
+
+Field editing adds `field_leases`: project UUID, opaque resource UUID, holder
+device UUID, random lease UUID, epoch and expiry. The resource UUID identifies a
+client-defined field without disclosing its name, path or value. The server learns
+when the same field is focused and by which device. `AcquireFieldLease`,
+`RenewFieldLease` and `ReleaseFieldLease` require current write access and device
+authentication. A grant lasts 30 seconds; renewal requires the same live lease.
+Expired/released focus needs a fresh lease UUID. Acquisition also returns the
+server clock and the project's latest sequence, which the client must catch up
+through before enabling editing. A new request includes a fixed `AcquireBefore`
+deadline no more than two minutes ahead, preserved on retries. Verified clients
+obtain the database clock through `GetFieldLeaseTime` before creating that
+deadline, so an inaccurate device clock cannot prevent acquisition. This exposes
+server time, not additional user or project data. Expired requests
+cannot acquire a lease. `field_lease_attempts` retains project/device/lease UUIDs
+only until that deadline, including denied attempts and releases received before
+acquisition, so delayed requests cannot resurrect an earlier focus after cleanup.
+This fences retries of the original request. A new attempt must use a fresh
+lease UUID and deadline. Changing the deadline alone cannot bypass a retained
+attempt. After retention expires, the original deadline still rejects an old
+request; the server does not keep permanent lease-UUID history.
+Renewal, editing, and release of an existing lease do not require an acquisition
+deadline. Cancellation received before acquisition must supply the original
+deadline so the server can retain its replay barrier until that time.
+There are at most 256 retained attempts per device and project; excess requests
+fail explicitly. Cleanup runs every minute and on field operations. A retry of a
+still-live lease returns its current grant. Field operations take a shared account
+lock to protect device cutover, allowing edits in independent projects to proceed
+concurrently. `PushFieldEdit` atomically validates the lease
+and persists an opaque encrypted update. Clients flush before releasing focus;
+late edits after expiry are rejected. Identical already-persisted retries return
+their original sequence. A lost connection leaves a bounded lease, and a new
+epoch invalidates old leases. This supplements encrypted document merging; the
+server does not interpret field values or enforce their internal schema.
+
+`PushGuardedFieldEdit` additionally requires a second live lease owned by the
+same authenticated device in the same project and epoch. Both leases are checked
+inside the transaction that allocates the update sequence. This fences dependent
+edits if a client pauses until its coordinating lease expires. The server learns
+that two opaque resources participate in one change, without their names or
+values. Identical confirmed retries remain idempotent. Clients use this distinct
+method so servers that lack support reject the operation rather than ignore its
+precondition.
 
 Device authentication adds immutable 32-byte Ed25519 and X25519 public keys to
 device records, plus the linking device ID and its public signature when linked.

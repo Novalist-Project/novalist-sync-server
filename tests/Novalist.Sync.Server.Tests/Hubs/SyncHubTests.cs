@@ -527,6 +527,36 @@ public sealed class SyncHubTests(DatabaseFixture database) : IAsyncDisposable
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FieldLeaseOperationsRecheckRevocationOnAnAlreadyOpenConnection(bool revokeDevice)
+    {
+        var writer = await ConnectAsync();
+        var project = await database.CreateProjectAsync((writer.UserId, MembershipRole.Contributor));
+        var request = new FieldLeaseRequest(project, Guid.NewGuid(), 0, Guid.NewGuid(), DateTimeOffset.UtcNow.AddMinutes(1));
+        await writer.Connection.InvokeAsync<FieldLeaseGrant>("AcquireFieldLease", request, Ct);
+        var envelope = TestData.Envelope(project, writer.DeviceId, 1);
+        await writer.Connection.InvokeAsync<long>("PushFieldEdit", request, envelope, Ct);
+        await using (var db = database.CreateContext())
+        {
+            if (revokeDevice) await db.Devices.Where(device => device.Id == writer.DeviceId)
+                .ExecuteUpdateAsync(set => set.SetProperty(device => device.RevokedAt, DateTimeOffset.UtcNow), Ct);
+            else await db.Memberships.Where(member => member.ProjectId == project && member.UserId == writer.UserId).ExecuteDeleteAsync(Ct);
+        }
+        Assert.Equal(HubConnectionState.Connected, writer.Connection.State);
+        await Assert.ThrowsAsync<HubException>(() => writer.Connection.InvokeAsync<FieldLeaseGrant>("AcquireFieldLease", request, Ct));
+        await Assert.ThrowsAsync<HubException>(() => writer.Connection.InvokeAsync<FieldLeaseGrant?>("RenewFieldLease", request, Ct));
+        await Assert.ThrowsAsync<HubException>(() => writer.Connection.InvokeAsync<bool>("ReleaseFieldLease", request, Ct));
+        await Assert.ThrowsAsync<HubException>(() => writer.Connection.InvokeAsync<long>("PushFieldEdit", request, envelope, Ct));
+        foreach (var entry in _server.Logs.Entries)
+        {
+            var text = entry.Message + entry.Exception + entry.ScopeText;
+            Assert.DoesNotContain(Convert.ToBase64String(envelope.Ciphertext), text);
+            Assert.DoesNotContain(Convert.ToHexString(envelope.Ciphertext), text);
+            Assert.DoesNotContain(entry.Values.Concat(entry.ScopeValues), value => value is byte[] or Envelope);
+        }
+    }
 
     private async Task<TestClient> ConnectAsync(User? user = null)
     {

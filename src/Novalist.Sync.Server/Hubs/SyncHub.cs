@@ -18,6 +18,7 @@ public sealed partial class SyncHub(
     InvitationAccess invitations,
     UpdateLog updateLog,
     PresenceAccess presence,
+    FieldLeaseAccess fieldLeases,
     ConnectionRegistry connections,
     ILogger<SyncHub> logger) : Hub<ISyncClient>, ISyncHub
 {

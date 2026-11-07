@@ -70,7 +70,23 @@ public sealed class Invitation
     public byte[]? CertificateHash { get; set; }
 }
 
+public sealed class FieldLease
+{
+    public Guid ProjectId { get; set; }
+    public Guid ResourceId { get; set; }
+    public Guid DeviceId { get; set; }
+    public Guid LeaseId { get; set; }
+    public long Epoch { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+}
 
+public sealed class FieldLeaseAttempt
+{
+    public Guid ProjectId { get; set; }
+    public Guid DeviceId { get; set; }
+    public Guid LeaseId { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+}
 
 public sealed class ProjectDeviceAuthorization
 {

@@ -69,6 +69,71 @@ namespace Novalist.Sync.Server.Migrations
                     b.ToTable("devices", (string)null);
                 });
 
+            modelBuilder.Entity("Novalist.Sync.Server.Data.FieldLease", b =>
+                {
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("project_id");
+
+                    b.Property<Guid>("ResourceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("resource_id");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("device_id");
+
+                    b.Property<long>("Epoch")
+                        .HasColumnType("bigint")
+                        .HasColumnName("epoch");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.Property<Guid>("LeaseId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lease_id");
+
+                    b.HasKey("ProjectId", "ResourceId")
+                        .HasName("pk_field_leases");
+
+                    b.HasIndex("DeviceId")
+                        .HasDatabaseName("ix_field_leases_device_id");
+
+                    b.ToTable("field_leases", (string)null);
+                });
+
+            modelBuilder.Entity("Novalist.Sync.Server.Data.FieldLeaseAttempt", b =>
+                {
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("project_id");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("device_id");
+
+                    b.Property<Guid>("LeaseId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("lease_id");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at");
+
+                    b.HasKey("ProjectId", "DeviceId", "LeaseId")
+                        .HasName("pk_field_lease_attempts");
+
+                    b.HasIndex("DeviceId")
+                        .HasDatabaseName("ix_field_lease_attempts_device_id");
+
+                    b.HasIndex("ExpiresAt")
+                        .HasDatabaseName("ix_field_lease_attempts_expires_at");
+
+                    b.ToTable("field_lease_attempts", (string)null);
+                });
+
             modelBuilder.Entity("Novalist.Sync.Server.Data.Invitation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -429,6 +494,40 @@ namespace Novalist.Sync.Server.Migrations
                         .HasConstraintName("fk_devices_users_user_id");
                     b.HasOne("Novalist.Sync.Server.Data.Device", null).WithMany().HasForeignKey("LinkedByDeviceId")
                         .OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_devices_devices_linked_by_device_id");
+                });
+
+            modelBuilder.Entity("Novalist.Sync.Server.Data.FieldLease", b =>
+                {
+                    b.HasOne("Novalist.Sync.Server.Data.Device", null)
+                        .WithMany()
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_field_leases_devices_device_id");
+
+                    b.HasOne("Novalist.Sync.Server.Data.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_field_leases_projects_project_id");
+                });
+
+            modelBuilder.Entity("Novalist.Sync.Server.Data.FieldLeaseAttempt", b =>
+                {
+                    b.HasOne("Novalist.Sync.Server.Data.Device", null)
+                        .WithMany()
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_field_lease_attempts_devices_device_id");
+
+                    b.HasOne("Novalist.Sync.Server.Data.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_field_lease_attempts_projects_project_id");
                 });
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.Invitation", b =>

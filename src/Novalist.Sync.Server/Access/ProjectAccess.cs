@@ -91,6 +91,8 @@ public sealed partial class ProjectAccess(SyncDbContext db, AccessDeliveryGate d
         await db.Invitations.Where(invitation => invitation.ProjectId == projectId &&
             (invitation.RedeemedBy == null || invitation.RedeemedBy == memberId))
             .ExecuteUpdateAsync(set => set.SetProperty(invitation => invitation.ExpiresAt, DateTimeOffset.UnixEpoch), cancellationToken);
+        var deviceIds = db.Devices.Where(device => device.UserId == memberId).Select(device => device.Id);
+        await db.FieldLeases.Where(lease => lease.ProjectId == projectId && deviceIds.Contains(lease.DeviceId)).ExecuteDeleteAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         if (onRemoved is not null) await onRemoved();
         return true;

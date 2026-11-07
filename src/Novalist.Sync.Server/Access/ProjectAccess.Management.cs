@@ -35,6 +35,8 @@ public sealed partial class ProjectAccess
         await EnsureIsOwnerAsync(ownerId, projectId, ct);
         var users = await db.Memberships.Where(member => member.ProjectId == projectId).Select(member => member.UserId).ToListAsync(ct);
         await db.Invitations.Where(invitation => invitation.ProjectId == projectId).ExecuteDeleteAsync(ct);
+        await db.FieldLeases.Where(lease => lease.ProjectId == projectId).ExecuteDeleteAsync(ct);
+        await db.FieldLeaseAttempts.Where(attempt => attempt.ProjectId == projectId).ExecuteDeleteAsync(ct);
         await db.ProjectEpochStages.Where(value => value.ProjectId == projectId).ExecuteDeleteAsync(ct);
         await db.ProjectEpochKeyGrants.Where(value => value.ProjectId == projectId).ExecuteDeleteAsync(ct);
         await db.ProjectDeviceAuthorizations.Where(value => value.ProjectId == projectId).ExecuteDeleteAsync(ct);

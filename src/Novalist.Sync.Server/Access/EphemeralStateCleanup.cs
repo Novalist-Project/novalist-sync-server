@@ -8,6 +8,7 @@ public sealed class EphemeralStateCleanup(SyncDbContext db)
     public async Task PruneAsync(CancellationToken ct)
     {
         var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(ct);
+        await db.FieldLeaseAttempts.Where(attempt => attempt.ExpiresAt <= now).ExecuteDeleteAsync(ct);
         await db.ProjectEpochStages.Where(stage => stage.CreatedAt <= now - ProjectEpochAccess.ReservationLifetime).ExecuteDeleteAsync(ct);
     }
 }
