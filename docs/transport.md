@@ -43,13 +43,17 @@ of the per-minute value (rounded up).
 | `RequestsPerMinutePerIp` | 120 | Requests per client address |
 | `RequestsPerMinutePerAccount` | 120 | Requests per authenticated account |
 
-Counted: every HTTP endpoint and hub negotiation, which every new hub connection
-needs. Requests that carry a hub connection token (`/sync?id=...`: the WebSocket
-connect request and long-polling or server-sent-event traffic) are free while the
-hub accepts the token; the connection and call limits below cover them. A request
+Counted: every HTTP endpoint except relay endpoints in relay mode, and hub
+negotiation, which every new hub connection needs. Requests that carry a hub
+connection token (`/sync?id=...`: the WebSocket connect request and long-polling
+or server-sent-event traffic) are free while the hub accepts the token; the connection and call limits below cover them. A request
 whose token the hub rejects (any 4xx response) is charged afterwards, and once the
 caller has no allowance left such requests get 429 up front, so made-up tokens
-cannot bypass the limits. `/relay/v1` has its own quotas.
+cannot bypass the limits. In relay mode `/relay/v1` is not counted here because it
+has its own quotas ([relay.md](relay.md)); in persistence mode it is counted like
+any other path. Buckets idle for 10 seconds are dropped, and per-address and
+per-account buckets are only created for requests the instance allowance admits,
+so many distinct addresses cannot grow the server's state without bound.
 
 ## Hub connections and calls
 
