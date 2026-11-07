@@ -720,9 +720,9 @@ MIME types and keys are only visible inside the encrypted manifest.
 
 - No convergent encryption (no content-derived keys): it would reveal when two
   users hold the same file.
-- Planned garbage collection (not implemented): clients will periodically report
-  referenced blob IDs, allowing the server to delete unreferenced blobs after a
-  grace period. Currently chunks remain until project deletion (§9.4).
+- Garbage collection: writers periodically report the blob IDs their manifest
+  references, and the server deletes blobs that stay unreferenced past a grace
+  period (§9.5).
 - On member removal, existing blobs stay under their old keys (re-encryption:
   v2).
 
@@ -752,20 +752,61 @@ index unreachable.
 The hub's receive limit is 128 KiB to accommodate one maximum-sized chunk in
 MessagePack or JSON. `blob_chunks` stores only project ID, opaque blob ID, chunk
 index and ciphertext. No filenames, MIME types, keys or final-chunk flags are
-sent as plaintext. Project deletion removes its chunks. Reference reporting and
-grace-period garbage collection remain future work; unused chunks currently
-remain until project deletion.
+sent as plaintext. Project deletion removes its chunks. Unreferenced blobs are
+collected as described in §9.5.
 
 `BlobStorage__MaxProjectBytes` bounds the total stored blob ciphertext per project
 (default 1 GiB, minimum 16 bytes). PostgreSQL serializes new uploads on the project
 row and commits the chunk and its byte counter in one transaction. Identical
 retries consume no extra space and still succeed at the limit; conflicting retries
 and new uploads exceeding the quota fail. Existing data remains downloadable if
-an operator lowers the limit below current usage. The quota counts every blob in
-the project, including abandoned uploads, until project deletion clears both the
-chunks and counter. The migration backfills usage from previously stored chunk
-lengths. The counter adds only an aggregate of already-visible ciphertext sizes;
-it exposes no plaintext content or keys.
+an operator lowers the limit below current usage. The quota counts every stored
+blob in the project, including abandoned uploads, until garbage collection
+(§9.5) or project deletion removes them. The migration backfills usage from
+previously stored chunk lengths. The counter adds only an aggregate of
+already-visible ciphertext sizes; it exposes no plaintext content or keys.
+
+### 9.5 Blob garbage collection
+
+Only clients can read the manifest, so only they know which blobs are still in
+use. A writer (owner or contributor) streams the complete set of blob IDs its
+current manifest references to `ReportBlobReferences(projectId, stream of
+blobId)`. A report holds at most `BlobTransfer.MaximumReportedReferences`
+(100 000) distinct IDs. The server buffers the stream before taking any lock,
+then rechecks device status and membership under the account and project
+delivery barriers, like every other blob operation. Viewers cannot report.
+
+Each report is applied in one transaction, under the same project row lock as
+uploads:
+
+- Reported blobs lose all marks. IDs with no stored chunks are ignored.
+- A blob the report omits gets `unreferenced_since` (if not already set).
+- A blob the report omits whose `unreferenced_since` is at least
+  `BlobStorage__UnreferencedGracePeriod` old (default 30 days, matching the
+  update history grace in §8.4) becomes collectable.
+
+Time alone never makes a blob collectable: collection needs two reports at least
+one grace period apart, and both must omit the blob. A project nobody opens
+keeps all its blobs. A blob uploaded while another writer's manifest change is
+still in transit is protected until a report sent a full grace period later
+confirms the omission. Uploading a new chunk to a blob clears its marks, so
+resumed uploads are safe. The cleanup job deletes collectable blobs in bounded
+batches (`BlobStorage__CollectionBatchSize`,
+`BlobStorage__CollectionMaxBatchesPerRun`), cascading to their chunks and
+subtracting their bytes from the project quota. It locks the project rows
+first and rechecks the mark in a separate statement, so a report or upload
+that committed in the meantime keeps the blob.
+
+Clients should report after catching up, while idle, and at most daily. A
+stale client's report can only start a grace period, which the next up-to-date
+report ends. A malicious writer could make blobs collectable by omitting them
+from two reports a grace period apart. That is no stronger than the write
+access it already has to the manifest.
+
+The `blobs` table records project ID, blob ID, stored bytes and the two
+timestamps. The server learns which already-visible blob IDs a writer's current
+manifest references, and when that changes. It learns no names, MIME types or
+keys.
 
 ## 10. What the server stores and sees
 
@@ -787,11 +828,13 @@ it exposes no plaintext content or keys.
 | `wrapped_keys` | §6.3 records                                                   | no               |
 | `updates`      | serverSeq, header, nonce, ciphertext, signature                | header only      |
 | `update_receipts` | project/device IDs, sender/server sequences, SHA-256 hashes of each opaque envelope field | metadata; no payload bytes |
+| `blobs`        | projectId, blobId, stored bytes, unreferenced/collectable timestamps (§9.5) | metadata; no keys |
 | `blob_chunks`  | blobId, index, ciphertext                                      | no               |
 
 Visible metadata: project and item counts, member lists, devices, timestamps,
 edit frequency per item, sizes, invitation expiry and claimant identities,
-opaque field-focus identifiers and timing, and epoch-transition boundaries.
+opaque field-focus identifiers and timing, epoch-transition boundaries, and
+which blob IDs a writer's current manifest references and when (§9.5).
 
 Verified owner connections can list project members using `ListProjectMembers`.
 The response contains the existing account UUID, the stable string role
