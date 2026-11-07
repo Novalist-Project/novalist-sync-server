@@ -78,4 +78,26 @@ public sealed partial class SyncHub
         await RequireVerifiedAccessAsync();
         return await epochs.ReadGrantAsync(UserId, DeviceId, projectId, afterEpoch, Context.ConnectionAborted);
     }
+
+    public async Task<StoredProjectEpochGrant?> GetLatestProjectEpochGrant(Guid projectId)
+    {
+        await using var access = await devices.PauseAccessChangesAsync(UserId, Context.ConnectionAborted);
+        await RequireVerifiedAccessAsync();
+        return await epochs.ReadGrantAsync(UserId, DeviceId, projectId, -1, Context.ConnectionAborted);
+    }
+
+    public async Task<IReadOnlyList<PendingProjectDevice>> ListPendingProjectDevices(Guid projectId)
+    {
+        await using var access = await devices.PauseAccessChangesAsync(UserId, Context.ConnectionAborted);
+        await RequireVerifiedAccessAsync();
+        return await epochs.PendingDevicesAsync(UserId, projectId, Context.ConnectionAborted);
+    }
+
+    public async Task AuthorizeProjectDevice(AuthorizeProjectDevice request)
+    {
+        await using var access = await devices.PauseAccessChangesAsync(UserId, Context.ConnectionAborted);
+        await RequireVerifiedAccessAsync();
+        await epochs.AuthorizeDeviceAsync(UserId, DeviceId, request, Context.ConnectionAborted);
+        await Clients.Clients(connections.ConnectionIdsOfDevice(request.Grant.DeviceId)).ProjectDeviceAuthorized(request.ProjectId);
+    }
 }

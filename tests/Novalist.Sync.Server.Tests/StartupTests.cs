@@ -7,6 +7,7 @@ using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.Extensions.Options;
 using System.Net.Http.Json;
 using Novalist.Sync.Contracts;
+using Novalist.Sync.Server.Tests.Infrastructure;
 
 namespace Novalist.Sync.Server.Tests;
 
@@ -21,9 +22,12 @@ public class StartupTests(DatabaseFixture database)
     [InlineData(null, "novalist-sync")]
     public async Task Production_WithoutLoginConfiguration_RefusesToStart(string? authority, string? audience)
     {
-        await using var server = new ProductionServer(database, authority, audience);
+        var settings = new Dictionary<string, string?> { ["Relay:Enabled"] = "false" };
+        // Omit missing settings: a null indexed entry still creates an audience child.
+        if (authority is not null) settings[Authority] = authority;
+        if (audience is not null) settings[Audience] = audience;
 
-        var ex = Assert.Throws<OptionsValidationException>(() => server.CreateClient());
+        var ex = await LoginConfigurationHost.StartFailureAsync("Production", settings);
 
         Assert.Contains(authority is null ? "Authority" : "ValidAudiences", ex.Message);
     }

@@ -1,9 +1,13 @@
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Novalist.Sync.Server.Relay;
 
 namespace Novalist.Sync.Server.Tests.Relay;
 
+// Uses a directly controlled host with the production AddRelay registration: a failed
+// WebApplicationFactory startup can dispose its provider before the deferred host
+// observes the validation exception, which surfaces as ObjectDisposedException.
 public sealed class RelayIntrospectionConfigurationTests
 {
     [Theory]
@@ -15,16 +19,9 @@ public sealed class RelayIntrospectionConfigurationTests
     [InlineData("TimeoutSeconds", "0.99")]
     public async Task ImpracticallyShortIntrospectionTimersPreventStartup(string setting, string value)
     {
-        await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Development");
-            builder.UseSetting("Relay:Enabled", "true");
-            builder.UseSetting("Relay:Introspection:Endpoint", "https://idp.test/introspect");
-            builder.UseSetting("Relay:Introspection:ClientId", "relay-test");
-            builder.UseSetting("Relay:Introspection:ClientSecret", "relay-test-secret");
-            builder.UseSetting("Relay:Introspection:" + setting, value);
-        });
-        Assert.Contains(setting, Assert.Throws<OptionsValidationException>(() => server.CreateClient()).Message);
+        var settings = ValidIntrospection();
+        settings["Relay:Introspection:" + setting] = value;
+        Assert.Contains(setting, (await StartFailureAsync(Environments.Development, settings)).Message);
     }
 
     [Theory]
@@ -33,16 +30,9 @@ public sealed class RelayIntrospectionConfigurationTests
     [InlineData("ClientSecret")]
     public async Task AuthenticatedRelayRequiresIntrospectionConfiguration(string missing)
     {
-        await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment("Development");
-            builder.UseSetting("Relay:Enabled", "true");
-            builder.UseSetting("Relay:Introspection:Endpoint", "https://idp.test/introspect");
-            builder.UseSetting("Relay:Introspection:ClientId", "relay-test");
-            builder.UseSetting("Relay:Introspection:ClientSecret", "relay-test-secret");
-            builder.UseSetting("Relay:Introspection:" + missing, "");
-        });
-        Assert.Contains("Introspection", Assert.Throws<OptionsValidationException>(() => server.CreateClient()).Message);
+        var settings = ValidIntrospection();
+        settings["Relay:Introspection:" + missing] = "";
+        Assert.Contains("Introspection", (await StartFailureAsync(Environments.Development, settings)).Message);
     }
 
     [Theory]
@@ -53,16 +43,26 @@ public sealed class RelayIntrospectionConfigurationTests
     [InlineData("Development", "https://idp.example/introspect#fragment")]
     public async Task UnsafeIntrospectionEndpointPreventsStartup(string environment, string endpoint)
     {
-        await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
-        {
-            builder.UseEnvironment(environment);
-            builder.UseSetting("Relay:Enabled", "true");
-            builder.UseSetting("Authentication:Schemes:Bearer:Authority", "https://idp.example");
-            builder.UseSetting("Authentication:Schemes:Bearer:ValidAudiences:0", "novalist");
-            builder.UseSetting("Relay:Introspection:Endpoint", endpoint);
-            builder.UseSetting("Relay:Introspection:ClientId", "relay-test");
-            builder.UseSetting("Relay:Introspection:ClientSecret", "relay-test-secret");
-        });
-        Assert.Contains("Introspection", Assert.Throws<OptionsValidationException>(() => server.CreateClient()).Message);
+        var settings = ValidIntrospection();
+        settings["Relay:Introspection:Endpoint"] = endpoint;
+        Assert.Contains("Introspection", (await StartFailureAsync(environment, settings)).Message);
+    }
+
+    private static Dictionary<string, string?> ValidIntrospection() => new()
+    {
+        ["Relay:Enabled"] = "true",
+        ["Relay:Introspection:Endpoint"] = "https://idp.test/introspect",
+        ["Relay:Introspection:ClientId"] = "relay-test",
+        ["Relay:Introspection:ClientSecret"] = "relay-test-secret"
+    };
+
+    private static async Task<OptionsValidationException> StartFailureAsync(string environment, Dictionary<string, string?> settings)
+    {
+        using var host = new HostBuilder()
+            .UseEnvironment(environment)
+            .ConfigureAppConfiguration(builder => builder.AddInMemoryCollection(settings))
+            .ConfigureServices((context, services) => services.AddRelay(context.Configuration))
+            .Build();
+        return await Assert.ThrowsAsync<OptionsValidationException>(() => host.StartAsync(TestContext.Current.CancellationToken));
     }
 }

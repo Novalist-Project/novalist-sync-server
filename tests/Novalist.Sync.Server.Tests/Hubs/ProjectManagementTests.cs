@@ -111,6 +111,32 @@ public sealed class ProjectManagementTests(DatabaseFixture database)
     }
 
     [Fact]
+    public async Task OwnerAuthorizesAMembersNewDeviceWhichIsNotifiedAndReadsItsGrant()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = new SyncServer(database);
+        await using var owner = await ConnectAsync(server, ct);
+        await using var laptop = await ConnectAsync(server, ct);
+        var project = await database.CreateProjectAsync((owner.UserId, MembershipRole.Owner), (laptop.UserId, MembershipRole.Contributor));
+        await owner.Hub.InvokeAsync("RegisterProjectDevice", project, 0U, RandomNumberGenerator.GetBytes(182), ct);
+        var pending = Assert.Single(await owner.Hub.InvokeAsync<PendingProjectDevice[]>("ListPendingProjectDevices", project, ct));
+        Assert.Equal((laptop.UserId, laptop.DeviceId), (pending.UserId, pending.Chain[0].Keys.DeviceId));
+        await Assert.ThrowsAsync<HubException>(() => laptop.Hub.InvokeAsync<PendingProjectDevice[]>("ListPendingProjectDevices", project, ct));
+        Assert.Null(await laptop.Hub.InvokeAsync<StoredProjectEpochGrant?>("GetLatestProjectEpochGrant", project, ct));
+        var authorized = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var notification = laptop.Hub.On<Guid>("ProjectDeviceAuthorized", id => authorized.TrySetResult(id));
+        var grant = new ProjectEpochGrant(laptop.DeviceId, RandomNumberGenerator.GetBytes(182), RandomNumberGenerator.GetBytes(128));
+
+        await owner.Hub.InvokeAsync("AuthorizeProjectDevice", new AuthorizeProjectDevice(project, 0, grant), ct);
+
+        Assert.Equal(project, await authorized.Task.WaitAsync(TimeSpan.FromSeconds(5), ct));
+        var stored = await laptop.Hub.InvokeAsync<StoredProjectEpochGrant?>("GetLatestProjectEpochGrant", project, ct);
+        Assert.Equal(grant.Payload, stored!.Payload);
+        Assert.Equal(owner.DeviceId, stored.GrantorDeviceId);
+        Assert.Empty(await owner.Hub.InvokeAsync<PendingProjectDevice[]>("ListPendingProjectDevices", project, ct));
+    }
+
+    [Fact]
     public async Task CatchUpRejectsPositionsBeforeTheHistoryBoundaryThroughTheHub()
     {
         var ct = TestContext.Current.CancellationToken;

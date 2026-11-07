@@ -36,6 +36,28 @@ public static class TestData
         return device.Id;
     }
 
+    // A verified device with random public keys, optionally linked by another device of the same account.
+    public static async Task<Guid> CreateKeyedDeviceAsync(this DatabaseFixture database, Guid userId, Guid? linkedBy = null, bool revoked = false)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var device = new Device
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            CreatedAt = now,
+            RevokedAt = revoked ? now : null,
+            SigningPublicKey = RandomNumberGenerator.GetBytes(32),
+            ReceivingPublicKey = RandomNumberGenerator.GetBytes(32),
+            LinkedByDeviceId = linkedBy,
+            LinkingSignature = linkedBy is null ? null : RandomNumberGenerator.GetBytes(64),
+        };
+
+        await using var db = database.CreateContext();
+        db.Devices.Add(device);
+        await db.SaveChangesAsync(Ct);
+        return device.Id;
+    }
+
     public static async Task<Guid> CreateProjectAsync(
         this DatabaseFixture database,
         params (Guid UserId, MembershipRole Role)[] members)

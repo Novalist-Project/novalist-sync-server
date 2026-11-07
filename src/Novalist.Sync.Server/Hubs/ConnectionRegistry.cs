@@ -39,6 +39,12 @@ public sealed class ConnectionRegistry
             .Select(c => c.Context.ConnectionId)
             .ToList();
 
+    public IReadOnlyList<string> ConnectionIdsOfDevice(Guid deviceId) =>
+        _connections.Values
+            .Where(c => c.DeviceId == deviceId)
+            .Select(c => c.Context.ConnectionId)
+            .ToList();
+
     public void RevokeProject(Guid userId, Guid projectId)
     {
         foreach (var connection in _connections.Values.Where(value => value.UserId == userId))
