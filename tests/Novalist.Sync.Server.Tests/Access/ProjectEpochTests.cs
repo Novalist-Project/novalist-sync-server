@@ -186,7 +186,7 @@ public sealed class ProjectEpochTests(DatabaseFixture database)
         await service.ReserveAsync(owner.Id, device, project, rotation, ct);
         if (expire)
             await db.Database.ExecuteSqlInterpolatedAsync(
-                $"UPDATE project_epoch_stages SET created_at = clock_timestamp() - interval '3 minutes' WHERE id = {rotation}", ct);
+                $"UPDATE project_epoch_stages SET created_at = clock_timestamp() - interval '3 minutes', last_activity_at = clock_timestamp() - interval '3 minutes' WHERE id = {rotation}", ct);
         else await service.CancelAsync(owner.Id, device, rotation, ct);
         db.ChangeTracker.Clear();
         Assert.Equal(1, await new UpdateLog(db).AppendAsync(owner.Id, TestData.Envelope(project, device, 1), ct));

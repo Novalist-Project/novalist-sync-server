@@ -521,16 +521,47 @@ deduplication of retries (`senderSeq`) and catch-up all depend on it.
 ### 8.4 Catch-up, snapshots and retention
 
 - On connect: `CatchUp(projectId, lastServerSeq)`, process as in §8.3.
-- A client creates a snapshot of an item **every 500 updates to that item, or
-  when the project is closed**: the Yjs host encodes the state
-  (`Y.encodeStateAsUpdate`), and .NET seals it with `K_snapshot` and uploads it
-  with `coversServerSeq = N`.
-- Updates to that item with `serverSeq <= N` that are covered by a retained
-  snapshot are deleted.
-- **Tiered retention** (enforced by the server, which only needs timestamps):
-  keep snapshots **hourly for 24 hours, daily for 30 days, weekly beyond that**.
-  These form the shared version history; Novalist's local per-scene snapshots
-  continue to work as before.
+
+**Implemented: compaction at epoch boundaries.** The client compacts through key
+rotation (§8.7). The owner uploads a checkpoint of the whole project, and each
+device starts a fresh journal at the boundary `B + 1` that is signed into its key
+grant (`FirstServerSeq`). No current client reads updates before that boundary,
+so the server:
+
+- sets `projects.history_starts_at = B + 1` in the same conditional update that
+  advances the epoch, and records a `project_history_boundaries` row with the
+  commit time;
+- rejects `CatchUp` with `afterServerSeq < history_starts_at - 1` instead of
+  serving a stream with a gap. Each page validates the cursor and reads its updates
+  in one repeatable-read snapshot, released before delivery. A rotation that
+  overtakes a stream causes a clear checkpoint-refresh error on the next page;
+- deletes updates with `serverSeq` below the newest boundary that is older than
+  a grace period (`UpdateHistory__CompactionGracePeriod`, default 30 days), in
+  batches, from the cleanup job. Until then, a broken checkpoint can still be
+  recovered from the old updates. Each boundary keeps its own timestamp, so
+  frequent rotations don't postpone deletion.
+
+Pruning atomically replaces each deleted update with an `update_receipts` row:
+project/device IDs, sender/server sequences, and separate SHA-256 hashes of the
+opaque header, nonce, ciphertext and signature. PostgreSQL's built-in hash function
+compares bytes without interpreting or decrypting them. Receipts preserve exact
+confirmed-push retries and reject reused sender sequences after payload deletion.
+They remain until project deletion; they contain no payload bytes or keys.
+
+The rotation reservation is sliding: it expires after 2 minutes without
+staging activity and after 30 minutes in total, so large checkpoints can finish
+uploading while pushes stay blocked. Successful identical envelope and grant
+retries also persist activity without extending the 30-minute cap.
+
+Clients are expected to trigger rotations by log size, not by the calendar
+(e.g. when the log since the boundary exceeds four times the checkpoint, at most
+daily, while idle), and to batch editor updates (250 ms) before saving them.
+
+**Not implemented (original plan, superseded in practice; D8/D9 in §11 still
+describe it):** per-item snapshots every 500 updates sealed with `K_snapshot`,
+deletion of updates covered by them, and tiered snapshot retention (hourly for
+24 hours, daily for 30 days, weekly beyond that) as shared version history.
+Novalist's local per-scene snapshots continue to work as before.
 
 ### 8.5 Adding a member
 
@@ -679,8 +710,10 @@ MIME types and keys are only visible inside the encrypted manifest.
 | `project_epoch_envelopes` | rotationId, index, senderSeq, opaque checkpoint envelope | envelope header only |
 | `project_epoch_device_grants` | rotationId, recipient deviceId, public certificate, opaque staged grant | metadata; no keys |
 | `project_epoch_key_grants` | projectId, recipient/grantor deviceIds, epoch, first serverSeq, opaque grant | metadata; no keys |
+| `project_history_boundaries` | projectId, first serverSeq, rotation commit timestamp | metadata; no keys |
 | `wrapped_keys` | §6.3 records                                                   | no               |
 | `updates`      | serverSeq, header, nonce, ciphertext, signature                | header only      |
+| `update_receipts` | project/device IDs, sender/server sequences, SHA-256 hashes of each opaque envelope field | metadata; no payload bytes |
 | `snapshots`    | coversServerSeq, timestamp, envelope                           | header only      |
 | `blob_chunks`  | blobId, index, ciphertext                                      | no               |
 
@@ -711,8 +744,9 @@ authority before wrapping a new random epoch key.
 
 Epoch transitions reserve a stable update boundary before clients catch up and
 construct the new checkpoint. `ReserveProjectEpoch` returns that boundary and
-fences new old-epoch writes for up to two minutes; confirmed update retries still
-return their original sequence. One reservation may be active per project.
+fences new old-epoch writes for two idle minutes, capped at 30 minutes in total;
+confirmed update retries still return their original sequence. One reservation
+may be active per project.
 `CancelProjectEpoch` releases an abandoned reservation, and periodic cleanup
 deletes expired staging data. Clients cancel on failure and retry from a fresh
 reservation if the deadline expires. Transitions then stage opaque checkpoint

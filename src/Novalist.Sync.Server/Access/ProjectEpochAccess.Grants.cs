@@ -17,6 +17,7 @@ public sealed partial class ProjectEpochAccess
         {
             if (!existing.Certificate.AsSpan().SequenceEqual(grant.Certificate) || !existing.Payload.AsSpan().SequenceEqual(grant.Payload))
                 throw new ConflictException("The staged key grant changed.");
+            await transaction.CommitAsync(ct);
             return;
         }
         db.ProjectEpochDeviceGrants.Add(new()

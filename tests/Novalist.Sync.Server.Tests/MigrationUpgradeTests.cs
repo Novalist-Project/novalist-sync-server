@@ -65,6 +65,9 @@ public sealed class MigrationUpgradeTests(DatabaseFixture database)
             Assert.Equal(MembershipRole.Owner, (await db.Memberships.SingleAsync(ct)).Role);
             Assert.Equal(project, (await db.Projects.SingleAsync(ct)).Id);
             Assert.Equal(1, await db.Projects.Select(value => value.LastServerSeq).SingleAsync(ct));
+            Assert.Equal(1, await db.Projects.Select(value => value.HistoryStartsAt).SingleAsync(ct));
+            Assert.Empty(await db.ProjectHistoryBoundaries.ToListAsync(ct));
+            Assert.Empty(await db.UpdateReceipts.ToListAsync(ct));
             Assert.Equivalent(update, await db.Updates.AsNoTracking().SingleAsync(ct), strict: true);
             var lease = Guid.NewGuid();
             db.FieldLeaseAttempts.Add(new()
@@ -92,6 +95,48 @@ public sealed class MigrationUpgradeTests(DatabaseFixture database)
             Assert.Equal(1, await db.Projects.Select(value => value.LastServerSeq).SingleAsync(ct));
             Assert.Equivalent(update, await db.Updates.AsNoTracking().SingleAsync(ct), strict: true);
             Assert.Empty(await db.FieldLeaseAttempts.ToListAsync(ct));
+            Assert.Empty(await db.UpdateReceipts.ToListAsync(ct));
+        }
+        finally
+        {
+            await db.Database.EnsureDeletedAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task EpochCompactionBackfillsHistoryForProjectsThatAlreadyRotated()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var connection = new NpgsqlConnectionStringBuilder(database.ConnectionString)
+        {
+            Database = $"novalist_upgrade_test_{Guid.NewGuid():N}"
+        };
+        await using var db = new SyncDbContext(new DbContextOptionsBuilder<SyncDbContext>()
+            .UseNpgsql(connection.ConnectionString).UseSnakeCaseNamingConvention().Options);
+        try
+        {
+            await db.GetService<IMigrator>().MigrateAsync("20261024173741_FieldLeases", ct);
+            var rotated = Guid.NewGuid();
+            var untouched = Guid.NewGuid();
+            var device = Guid.NewGuid();
+            var other = Guid.NewGuid();
+            var now = DateTimeOffset.UtcNow;
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO projects (id, current_epoch, epoch_started_at, last_server_seq, created_at)
+                    VALUES ({rotated}, 2, {now}, 20, {now}), ({untouched}, 0, {now}, 3, {now});
+                INSERT INTO project_epoch_key_grants (project_id, device_id, epoch, first_server_seq, grantor_device_id, payload)
+                    VALUES ({rotated}, {device}, 1, 6, {device}, '\x01'::bytea),
+                           ({rotated}, {other}, 1, 6, {device}, '\x01'::bytea),
+                           ({rotated}, {device}, 2, 15, {device}, '\x01'::bytea);
+                """, ct);
+
+            await db.Database.MigrateAsync(ct);
+
+            Assert.Equal(15, await db.Projects.Where(value => value.Id == rotated).Select(value => value.HistoryStartsAt).SingleAsync(ct));
+            Assert.Equal(1, await db.Projects.Where(value => value.Id == untouched).Select(value => value.HistoryStartsAt).SingleAsync(ct));
+            Assert.Equal(new[] { 6L, 15L }, await db.ProjectHistoryBoundaries.Where(value => value.ProjectId == rotated)
+                .OrderBy(value => value.FirstServerSeq).Select(value => value.FirstServerSeq).ToListAsync(ct));
+            Assert.False(await db.ProjectHistoryBoundaries.AnyAsync(value => value.ProjectId == untouched, ct));
         }
         finally
         {

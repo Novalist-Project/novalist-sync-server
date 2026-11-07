@@ -14,11 +14,11 @@ public sealed partial class ProjectEpochAccess
         await projects.EnsureIsOwnerAsync(user, projectId, ct);
         if (project.CurrentEpoch == uint.MaxValue) throw new ConflictException("The project cannot advance its encryption epoch.");
         var now = await DatabaseTimeAsync(ct);
-        await db.ProjectEpochStages.Where(stage => stage.ProjectId == projectId && stage.CreatedAt <= now - ReservationLifetime).ExecuteDeleteAsync(ct);
+        await db.ProjectEpochStages.Where(stage => stage.ProjectId == projectId).Where(ExpiredAt(now)).ExecuteDeleteAsync(ct);
         await EnsureReservationAvailableAsync(projectId, rotation, ct);
         await db.Database.ExecuteSqlInterpolatedAsync($"""
-            INSERT INTO project_epoch_stages (id, project_id, device_id, previous_epoch, previous_server_seq, created_at, count)
-            VALUES ({rotation}, {projectId}, {device}, {project.CurrentEpoch}, {project.LastServerSeq}, {now}, 0)
+            INSERT INTO project_epoch_stages (id, project_id, device_id, previous_epoch, previous_server_seq, created_at, last_activity_at, count)
+            VALUES ({rotation}, {projectId}, {device}, {project.CurrentEpoch}, {project.LastServerSeq}, {now}, {now}, 0)
             ON CONFLICT (id) DO NOTHING
             """, ct);
         var reserved = await LockStageAsync(rotation, device, ct);

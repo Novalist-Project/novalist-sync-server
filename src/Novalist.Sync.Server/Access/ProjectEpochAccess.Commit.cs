@@ -50,10 +50,16 @@ public sealed partial class ProjectEpochAccess
             await db.ProjectDeviceAuthorizations.Where(value => value.ProjectId == project.Id && value.DeviceId == grant.DeviceId)
                 .ExecuteUpdateAsync(set => set.SetProperty(value => value.Epoch, stage.PreviousEpoch + 1).SetProperty(value => value.Certificate, grant.Certificate), ct);
         }
+        // The checkpoint replaces everything up to the boundary, so history now starts right after it.
+        // Same conditional UPDATE as the epoch advance: the boundary only moves if this rotation wins.
+        var historyStartsAt = stage.PreviousServerSeq + 1;
         var advanced = await db.Projects.Where(value => value.Id == project.Id && value.CurrentEpoch == stage.PreviousEpoch && value.LastServerSeq == stage.PreviousServerSeq)
             .ExecuteUpdateAsync(set => set.SetProperty(value => value.CurrentEpoch, stage.PreviousEpoch + 1)
-                .SetProperty(value => value.EpochStartedAt, DateTimeOffset.UtcNow), ct);
+                .SetProperty(value => value.EpochStartedAt, DateTimeOffset.UtcNow)
+                .SetProperty(value => value.HistoryStartsAt, historyStartsAt), ct);
         if (advanced != 1) throw new ConflictException("The project changed during key rotation. Refresh and try again.");
+        var committedAt = await DatabaseTimeAsync(ct);
+        db.ProjectHistoryBoundaries.Add(new() { ProjectId = project.Id, FirstServerSeq = historyStartsAt, CreatedAt = committedAt });
         await db.SaveChangesAsync(ct);
         await CopyCheckpointAsync(user, stage, ct);
         if (request.RemovedMemberId is { } memberId)
@@ -64,8 +70,12 @@ public sealed partial class ProjectEpochAccess
         await db.Invitations.Where(value => value.ProjectId == project.Id).ExecuteUpdateAsync(set => set.SetProperty(value => value.ExpiresAt, DateTimeOffset.UnixEpoch), ct);
         await db.FieldLeases.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
         await db.SaveChangesAsync(ct);
+        var checkpointBytes = await db.ProjectEpochEnvelopes.Where(value => value.RotationId == stage.Id).SumAsync(value => (long)value.Payload.Length, ct);
         await db.ProjectEpochStages.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
         await transaction.CommitAsync(ct);
+        log.LogInformation(
+            "Committed epoch {Epoch} for project {ProjectId}: history starts at {HistoryStartsAt}, checkpoint {EnvelopeCount} envelopes / {CheckpointBytes} bytes, staged for {StagedSeconds:F1}s.",
+            stage.PreviousEpoch + 1, project.Id, historyStartsAt, stage.Count, checkpointBytes, (committedAt - stage.CreatedAt).TotalSeconds);
         if (onCommitted is not null) await onCommitted(project.Id);
         return project.Id;
     }
@@ -81,7 +91,9 @@ public sealed partial class ProjectEpochAccess
             {
                 var envelope = JsonSerializer.Deserialize<Envelope>(value.Payload) ?? throw new FormatException("Missing checkpoint envelope.");
                 if (await db.Updates.AnyAsync(update => update.ProjectId == stage.ProjectId &&
-                    update.SenderDeviceId == stage.DeviceId && update.SenderSeq == value.SenderSeq, ct))
+                    update.SenderDeviceId == stage.DeviceId && update.SenderSeq == value.SenderSeq, ct) ||
+                    await db.UpdateReceipts.AnyAsync(receipt => receipt.ProjectId == stage.ProjectId &&
+                        receipt.SenderDeviceId == stage.DeviceId && receipt.SenderSeq == value.SenderSeq, ct))
                     throw new ConflictException("The checkpoint sender sequence was already used.");
                 await new UpdateLog(db).AppendAsync(user, envelope, ct);
             }

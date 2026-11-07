@@ -28,6 +28,7 @@ public sealed class Project
     public long CurrentEpoch { get; set; }
     public DateTimeOffset EpochStartedAt { get; set; }
     public long LastServerSeq { get; set; }
+    public long HistoryStartsAt { get; set; } = 1;
     public DateTimeOffset CreatedAt { get; set; }
 }
 
@@ -58,6 +59,18 @@ public sealed class StoredUpdate
     public byte[] Ciphertext { get; set; } = [];
     public byte[] Signature { get; set; } = [];
     public DateTimeOffset ReceivedAt { get; set; }
+}
+
+public sealed class UpdateReceipt
+{
+    public Guid ProjectId { get; set; }
+    public Guid SenderDeviceId { get; set; }
+    public long SenderSeq { get; set; }
+    public long ServerSeq { get; set; }
+    public byte[] HeaderHash { get; set; } = [];
+    public byte[] NonceHash { get; set; } = [];
+    public byte[] CiphertextHash { get; set; } = [];
+    public byte[] SignatureHash { get; set; } = [];
 }
 
 public sealed class Invitation
@@ -104,6 +117,14 @@ public sealed class ProjectEpochStage
     public long PreviousEpoch { get; set; }
     public long PreviousServerSeq { get; set; }
     public long Count { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset LastActivityAt { get; set; }
+}
+
+public sealed class ProjectHistoryBoundary
+{
+    public Guid ProjectId { get; set; }
+    public long FirstServerSeq { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
 
