@@ -87,7 +87,7 @@ public class StartupTests(DatabaseFixture database)
     // the way an admin would through environment variables.
     private sealed class ProductionServer(DatabaseFixture database, string? authority, string? audience, bool desktop = false,
         string scope = "openid profile offline_access sync", string clientId = "novalist")
-        : WebApplicationFactory<Program>
+        : HttpsWebApplicationFactory
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {

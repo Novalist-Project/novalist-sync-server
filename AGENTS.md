@@ -30,6 +30,7 @@ tests/
   Novalist.Sync.Contracts.Tests/
 docs/
   design.md
+  transport.md
 ```
 
 If the actual layout differs from this, follow the actual layout and update this

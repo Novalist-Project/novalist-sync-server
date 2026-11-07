@@ -4,7 +4,9 @@ using Microsoft.AspNetCore.SignalR;
 using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Access;
 using Novalist.Sync.Server.Blobs;
+using Novalist.Sync.Server.Transport;
 using Novalist.Sync.Server.Updates;
+using Microsoft.Extensions.Options;
 
 namespace Novalist.Sync.Server.Hubs;
 
@@ -22,6 +24,7 @@ public sealed partial class SyncHub(
     FieldLeaseAccess fieldLeases,
     BlobStore blobs,
     ConnectionRegistry connections,
+    IOptions<TransportOptions> transport,
     ILogger<SyncHub> logger) : Hub<ISyncClient>, ISyncHub
 {
     private const string UserIdItem = "userId";
@@ -40,7 +43,14 @@ public sealed partial class SyncHub(
 
         // Register before checking, so a revocation that lands in between still finds
         // this connection. If the check fails, the connection never counts as open.
-        connections.Add(Context, user.Id, deviceId);
+        var limits = transport.Value;
+        var address = ClientAddress.Key(Context.GetHttpContext()?.Connection.RemoteIpAddress);
+        if (!connections.TryAdd(Context, user.Id, deviceId, address,
+            new(limits.MaxConnections, limits.MaxConnectionsPerAccount, limits.MaxConnectionsPerIp)))
+        {
+            logger.LogWarning("Refused a connection from device {DeviceId} of user {UserId}: connection limit reached.", deviceId, user.Id);
+            throw new HubException("Too many open connections. Close another connection and retry.");
+        }
 
         try
         {

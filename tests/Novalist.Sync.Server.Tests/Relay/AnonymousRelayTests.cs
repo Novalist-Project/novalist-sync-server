@@ -95,7 +95,7 @@ public sealed class AnonymousRelayTests
     [Fact]
     public async Task AnonymousRelayStartsWithoutAnIdentityProviderAndAdvertisesItsPolicy()
     {
-        await using var server = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        await using var server = new HttpsWebApplicationFactory().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("Production");
             builder.UseSetting("Relay:Enabled", "true");
