@@ -882,14 +882,42 @@ omitted or null to rotate without removing a member, for example after revoking
 a stolen device or for periodic rotation. Revoke a stolen device before rotating;
 rotation alone does not revoke it, and every active registered device must receive
 a grant. Members without a registered, authorized device do not block rotation
-and receive no key grant. An API for an owner to authorize those devices and
-distribute their keys is not implemented yet.
+and receive no key grant. An owner authorizes them as described below.
 The commit still checks the reserved epoch and sequence atomically. Devices
 receive `ProjectEpochChanged` and restart against the owner-signed checkpoint
 boundary. Public metadata adds rotation IDs, device certificates, previous epochs,
 checkpoint boundary sequences, envelope/grant sizes and staging timestamps.
 The server never decrypts grants or checkpoint envelopes; clients verify the
 signature, pinned owner, recipient, monotonic epoch and checkpoint hash.
+
+Members' devices that never registered a project certificate, such as a second
+laptop or a replacement enrolled with the recovery key, are authorized by an owner.
+`ListPendingProjectDevices` returns, to a verified owner connection, every active
+device with public keys that belongs to a current member and has no project
+authorization. Each entry carries the device's linking chain: its public keys,
+linking device ID, linking signature and revoked flag, followed by the same
+for each linking device up to the account's first device, capped at 64 links.
+The owner verifies that chain and the member's safety number (§8.6) before
+trusting the receiving key. Nothing in the list is new metadata; it is the
+`devices` table already used for enrollment.
+
+`AuthorizeProjectDevice` takes the project, the current epoch and a
+`ProjectEpochGrant`: an owner-signed certificate for the current epoch and an opaque
+grant wrapping `EK_e` for the device (§6.3). The calling device must hold the
+current project authorization. The server locks the owner's and the device owner's
+accounts and the project, checks the epoch, rejects the call while any rotation
+reservation is active, and checks that the device is active, has public keys and
+belongs to a current member. It then stores the certificate in
+`project_device_authorizations` and the grant in `project_epoch_key_grants` for
+the current epoch with `FirstServerSeq = history_starts_at`, in one transaction.
+Everything from that boundary on is under the current epoch because rotation
+compacts history, so one key is enough to catch up. An identical retry succeeds;
+any other existing authorization is a conflict. The device's open connections
+receive `ProjectDeviceAuthorized(projectId)` and fetch the grant with
+`GetLatestProjectEpochGrant`, which also returns epoch 0 grants that
+`GetProjectEpochGrant(afterEpoch)` cannot express. From then on the device is
+registered: the next rotation must include its grant, and removing its account
+requires a rotation.
 
 Field editing adds `field_leases`: project UUID, opaque resource UUID, holder
 device UUID, random lease UUID, epoch and expiry. The resource UUID identifies a
