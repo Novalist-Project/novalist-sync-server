@@ -720,10 +720,52 @@ MIME types and keys are only visible inside the encrypted manifest.
 
 - No convergent encryption (no content-derived keys): it would reveal when two
   users hold the same file.
-- Garbage collection: clients periodically report referenced blob IDs; the
-  server deletes unreferenced blobs after a grace period.
+- Planned garbage collection (not implemented): clients will periodically report
+  referenced blob IDs, allowing the server to delete unreferenced blobs after a
+  grace period. Currently chunks remain until project deletion (§9.4).
 - On member removal, existing blobs stay under their old keys (re-encryption:
   v2).
+
+### 9.4 Implemented chunk transport
+
+Persistence mode exposes `UploadBlobChunk(projectId, blobId, chunk)` and
+`DownloadBlobChunk(projectId, blobId, chunkIndex)` on the authenticated SignalR
+hub. Upload requires write membership; download permits viewers. Verified devices
+must first complete their connection possession proof. Each operation, including
+each chunk request, rechecks device status and membership under the existing
+account and project delivery barriers. Removal and revocation reject later requests
+on an already-open connection. These barriers end before network delivery, so a
+slow downloader cannot hold up revocation. A chunk already authorized may still
+finish delivery after access ends.
+
+Chunks use zero-based integer indices and contain 16–65552 opaque bytes (up to
+64 KiB plaintext plus an authentication tag). Uploads may arrive independently
+and out of order. Identical retries succeed; changing an existing chunk fails.
+Chunk identity is scoped to the project and blob. Each download reads only the
+requested chunk, without buffering a whole blob. Clients transfer large blobs
+incrementally and resume by requesting missing indices. Missing chunks return
+null to authorized members, including while an upload is incomplete. Clients use
+the encrypted manifest's size and authenticated final-chunk marker to detect
+missing chunks or truncation. Out-of-order uploads cannot make a missing lower
+index unreachable.
+
+The hub's receive limit is 128 KiB to accommodate one maximum-sized chunk in
+MessagePack or JSON. `blob_chunks` stores only project ID, opaque blob ID, chunk
+index and ciphertext. No filenames, MIME types, keys or final-chunk flags are
+sent as plaintext. Project deletion removes its chunks. Reference reporting and
+grace-period garbage collection remain future work; unused chunks currently
+remain until project deletion.
+
+`BlobStorage__MaxProjectBytes` bounds the total stored blob ciphertext per project
+(default 1 GiB, minimum 16 bytes). PostgreSQL serializes new uploads on the project
+row and commits the chunk and its byte counter in one transaction. Identical
+retries consume no extra space and still succeed at the limit; conflicting retries
+and new uploads exceeding the quota fail. Existing data remains downloadable if
+an operator lowers the limit below current usage. The quota counts every blob in
+the project, including abandoned uploads, until project deletion clears both the
+chunks and counter. The migration backfills usage from previously stored chunk
+lengths. The counter adds only an aggregate of already-visible ciphertext sizes;
+it exposes no plaintext content or keys.
 
 ## 10. What the server stores and sees
 

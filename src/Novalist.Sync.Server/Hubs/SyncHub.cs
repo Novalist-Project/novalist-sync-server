@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Novalist.Sync.Contracts;
 using Novalist.Sync.Server.Access;
+using Novalist.Sync.Server.Blobs;
 using Novalist.Sync.Server.Updates;
 
 namespace Novalist.Sync.Server.Hubs;
@@ -19,6 +20,7 @@ public sealed partial class SyncHub(
     UpdateLog updateLog,
     PresenceAccess presence,
     FieldLeaseAccess fieldLeases,
+    BlobStore blobs,
     ConnectionRegistry connections,
     ILogger<SyncHub> logger) : Hub<ISyncClient>, ISyncHub
 {

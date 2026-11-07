@@ -2,8 +2,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Novalist.Sync.Server.Data;
 
-public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbContext(options)
+public sealed class SyncDbContext : DbContext
 {
+    public SyncDbContext(DbContextOptions<SyncDbContext> options) : base(options)
+    {
+    }
+
     public DbSet<User> Users => Set<User>();
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<Project> Projects => Set<Project>();
@@ -19,10 +23,12 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
     public DbSet<ProjectEpochKeyGrant> ProjectEpochKeyGrants => Set<ProjectEpochKeyGrant>();
     public DbSet<ProjectEpochDeviceGrant> ProjectEpochDeviceGrants => Set<ProjectEpochDeviceGrant>();
     public DbSet<ProjectHistoryBoundary> ProjectHistoryBoundaries => Set<ProjectHistoryBoundary>();
+    public DbSet<StoredBlobChunk> BlobChunks => Set<StoredBlobChunk>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureHistory(modelBuilder);
+        ConfigureBlobChunks(modelBuilder);
         modelBuilder.Entity<UpdateReceipt>(entry =>
         {
             entry.HasKey(value => new { value.ProjectId, value.SenderDeviceId, value.SenderSeq });
@@ -103,12 +109,28 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
         });
     }
 
+    private static void ConfigureBlobChunks(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<StoredBlobChunk>(entry =>
+        {
+            entry.HasKey(value => new { value.ProjectId, value.BlobId, value.Index });
+            entry.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
+            entry.ToTable("blob_chunks", table =>
+            {
+                table.HasCheckConstraint("ck_blob_chunks_index", "index >= 0");
+                table.HasCheckConstraint("ck_blob_chunks_size", "octet_length(ciphertext) BETWEEN 16 AND 65552");
+            });
+        });
+    }
+
     private static void ConfigureHistory(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Project>(project =>
         {
             project.Property(p => p.Id).ValueGeneratedNever();
+            project.Property(p => p.BlobBytesStored).HasDefaultValue(0L);
             project.ToTable(table => table.HasCheckConstraint("ck_projects_history_starts_at", "history_starts_at >= 1"));
+            project.ToTable(table => table.HasCheckConstraint("ck_projects_blob_bytes_stored", "blob_bytes_stored >= 0"));
         });
         modelBuilder.Entity<ProjectHistoryBoundary>(entry =>
         {

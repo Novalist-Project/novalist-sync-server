@@ -211,6 +211,12 @@ namespace Novalist.Sync.Server.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<long>("BlobBytesStored")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("blob_bytes_stored");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -236,6 +242,8 @@ namespace Novalist.Sync.Server.Migrations
 
                     b.ToTable("projects", null, t =>
                         {
+                            t.HasCheckConstraint("ck_projects_blob_bytes_stored", "blob_bytes_stored >= 0");
+
                             t.HasCheckConstraint("ck_projects_history_starts_at", "history_starts_at >= 1");
                         });
                 });
@@ -428,6 +436,36 @@ namespace Novalist.Sync.Server.Migrations
                         .HasDatabaseName("ix_project_history_boundaries_created_at");
 
                     b.ToTable("project_history_boundaries", (string)null);
+                });
+
+            modelBuilder.Entity("Novalist.Sync.Server.Data.StoredBlobChunk", b =>
+                {
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("project_id");
+
+                    b.Property<Guid>("BlobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("blob_id");
+
+                    b.Property<int>("Index")
+                        .HasColumnType("integer")
+                        .HasColumnName("index");
+
+                    b.Property<byte[]>("Ciphertext")
+                        .IsRequired()
+                        .HasColumnType("bytea")
+                        .HasColumnName("ciphertext");
+
+                    b.HasKey("ProjectId", "BlobId", "Index")
+                        .HasName("pk_blob_chunks");
+
+                    b.ToTable("blob_chunks", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_blob_chunks_index", "index >= 0");
+
+                            t.HasCheckConstraint("ck_blob_chunks_size", "octet_length(ciphertext) BETWEEN 16 AND 65552");
+                        });
                 });
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.StoredUpdate", b =>
@@ -732,6 +770,16 @@ namespace Novalist.Sync.Server.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_project_history_boundaries_projects_project_id");
+                });
+
+            modelBuilder.Entity("Novalist.Sync.Server.Data.StoredBlobChunk", b =>
+                {
+                    b.HasOne("Novalist.Sync.Server.Data.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_blob_chunks_projects_project_id");
                 });
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.StoredUpdate", b =>

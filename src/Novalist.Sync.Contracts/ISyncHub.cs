@@ -2,6 +2,9 @@ namespace Novalist.Sync.Contracts;
 
 public interface ISyncHub
 {
+    Task UploadBlobChunk(Guid projectId, Guid blobId, BlobChunk chunk);
+    Task<BlobChunk?> DownloadBlobChunk(Guid projectId, Guid blobId, int chunkIndex);
+
     Task<ProjectEpochStatus> GetProjectEpoch(Guid projectId);
     Task RegisterProjectDevice(Guid projectId, uint epoch, byte[] certificate);
     Task<IReadOnlyList<ProjectDevice>> ListProjectDevices(Guid projectId);
