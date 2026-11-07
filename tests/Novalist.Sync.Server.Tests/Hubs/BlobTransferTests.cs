@@ -184,11 +184,14 @@ public sealed class BlobTransferTests(DatabaseFixture database)
         var user = await database.CreateUserAsync();
         var project = await database.CreateProjectAsync((user.Id, MembershipRole.Owner));
         await using var db = database.CreateContext();
-        db.BlobChunks.Add(new() { ProjectId = project, BlobId = Guid.NewGuid(), Index = 0, Ciphertext = new byte[16] });
+        var blob = Guid.NewGuid();
+        db.Blobs.Add(new() { ProjectId = project, BlobId = blob, BytesStored = 16, UnreferencedSince = DateTimeOffset.UtcNow });
+        db.BlobChunks.Add(new() { ProjectId = project, BlobId = blob, Index = 0, Ciphertext = new byte[16] });
         await db.SaveChangesAsync(ct);
         await db.Projects.Where(value => value.Id == project).ExecuteUpdateAsync(set => set.SetProperty(value => value.BlobBytesStored, 16L), ct);
         await new ProjectAccess(db, database.DeliveryGate).DeleteAsync(user.Id, project, ct);
         Assert.False(await db.BlobChunks.AnyAsync(value => value.ProjectId == project, ct));
+        Assert.False(await db.Blobs.AnyAsync(value => value.ProjectId == project, ct));
         Assert.Equal(0, await db.Projects.Where(value => value.Id == project).Select(value => value.BlobBytesStored).SingleAsync(ct));
     }
 

@@ -438,6 +438,43 @@ namespace Novalist.Sync.Server.Migrations
                     b.ToTable("project_history_boundaries", (string)null);
                 });
 
+            modelBuilder.Entity("Novalist.Sync.Server.Data.StoredBlob", b =>
+                {
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("project_id");
+
+                    b.Property<Guid>("BlobId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("blob_id");
+
+                    b.Property<long>("BytesStored")
+                        .HasColumnType("bigint")
+                        .HasColumnName("bytes_stored");
+
+                    b.Property<DateTimeOffset?>("CollectableAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("collectable_at");
+
+                    b.Property<DateTimeOffset?>("UnreferencedSince")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("unreferenced_since");
+
+                    b.HasKey("ProjectId", "BlobId")
+                        .HasName("pk_blobs");
+
+                    b.HasIndex("ProjectId")
+                        .HasDatabaseName("ix_blobs_collectable")
+                        .HasFilter("collectable_at IS NOT NULL");
+
+                    b.ToTable("blobs", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_blobs_bytes_stored", "bytes_stored >= 0");
+
+                            t.HasCheckConstraint("ck_blobs_collectable", "collectable_at IS NULL OR unreferenced_since IS NOT NULL");
+                        });
+                });
+
             modelBuilder.Entity("Novalist.Sync.Server.Data.StoredBlobChunk", b =>
                 {
                     b.Property<Guid>("ProjectId")
@@ -772,6 +809,16 @@ namespace Novalist.Sync.Server.Migrations
                         .HasConstraintName("fk_project_history_boundaries_projects_project_id");
                 });
 
+            modelBuilder.Entity("Novalist.Sync.Server.Data.StoredBlob", b =>
+                {
+                    b.HasOne("Novalist.Sync.Server.Data.Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_blobs_projects_project_id");
+                });
+
             modelBuilder.Entity("Novalist.Sync.Server.Data.StoredBlobChunk", b =>
                 {
                     b.HasOne("Novalist.Sync.Server.Data.Project", null)
@@ -780,6 +827,13 @@ namespace Novalist.Sync.Server.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("fk_blob_chunks_projects_project_id");
+
+                    b.HasOne("Novalist.Sync.Server.Data.StoredBlob", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId", "BlobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_blob_chunks_blobs_project_id_blob_id");
                 });
 
             modelBuilder.Entity("Novalist.Sync.Server.Data.StoredUpdate", b =>

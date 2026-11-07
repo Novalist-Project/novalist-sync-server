@@ -46,3 +46,18 @@ reapplying the migration alone cannot recover lost retry acknowledgements.
 cleanup and repairs the activity default on databases that applied an earlier
 revision of `EpochCompaction`. Rolling it back removes only the index; the safe
 `CURRENT_TIMESTAMP` default remains.
+
+`BlobCollection` adds the `blobs` table: one row per stored blob with its byte
+count and garbage-collection marks. It is backfilled from `blob_chunks`, with no
+marks set, so no existing blob becomes collectable before two reference reports
+a grace period apart. A composite foreign key cascades blob deletion to the
+blob's chunks. Stop the old server before applying it, and keep it stopped:
+the migration locks `blob_chunks` so concurrent uploads cannot break the
+backfill, but an older server running against the upgraded schema is unsafe.
+Its uploads of new blob IDs fail the foreign key. Its uploads to blob IDs that
+already exist pass it, but they neither add to the blob's byte count nor clear
+its collection marks. A resumed upload could then be collected, and collecting
+the blob would return too few bytes to the project quota. Rolling it back
+drops the table and its marks while keeping every chunk and the project byte
+counters. After the cleanup job has collected blobs, rollback cannot restore
+their chunks.

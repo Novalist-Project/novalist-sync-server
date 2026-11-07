@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Novalist.Sync.Server.Access;
+using Novalist.Sync.Server.Blobs;
 using Novalist.Sync.Server.Tests.Infrastructure;
 using Npgsql;
 
@@ -25,7 +26,8 @@ public sealed class EphemeralStateCleanupTests(DatabaseFixture database)
         }
         var failure = new FailFirstPrune();
         await using var services = new ServiceCollection().AddScoped(_ => database.CreateContext(failure))
-            .AddScoped<EphemeralStateCleanup>().BuildServiceProvider();
+            .AddScoped<EphemeralStateCleanup>().AddScoped<BlobCollector>()
+            .AddSingleton(Microsoft.Extensions.Options.Options.Create(new BlobStorageOptions())).BuildServiceProvider();
         var clock = new ManualClock();
         var log = new FailureLog();
         using var worker = new EphemeralStateCleanupService(services.GetRequiredService<IServiceScopeFactory>(), log, clock);
@@ -34,7 +36,7 @@ public sealed class EphemeralStateCleanupTests(DatabaseFixture database)
         {
             var timer = await clock.Ready.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
             timer.Tick();
-            await log.Failed.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            Assert.StartsWith("Ephemeral state cleanup failed", await log.Failed.Task.WaitAsync(TimeSpan.FromSeconds(5), ct));
             Assert.NotNull(worker.ExecuteTask);
             Assert.False(worker.ExecuteTask.IsCompleted);
             timer.Tick();
@@ -45,6 +47,47 @@ public sealed class EphemeralStateCleanupTests(DatabaseFixture database)
         }
         finally { await worker.StopAsync(ct); }
         Assert.True(worker.ExecuteTask.IsCompleted);
+    }
+
+    [Fact]
+    public async Task BlobCollectionFailureIsReportedAsSuchAndPruningStillRuns()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var user = await database.CreateUserAsync();
+        var device = await database.CreateDeviceAsync(user.Id);
+        var project = await database.CreateProjectAsync((user.Id, Novalist.Sync.Server.Data.MembershipRole.Owner));
+        await using (var db = database.CreateContext())
+        {
+            db.FieldLeaseAttempts.Add(new() { ProjectId = project, DeviceId = device, LeaseId = Guid.NewGuid(), ExpiresAt = DateTimeOffset.UnixEpoch });
+            await db.SaveChangesAsync(ct);
+        }
+        await using var services = new ServiceCollection().AddScoped(_ => database.CreateContext(new FailBlobCollection()))
+            .AddScoped<EphemeralStateCleanup>().AddScoped<BlobCollector>()
+            .AddSingleton(Microsoft.Extensions.Options.Options.Create(new BlobStorageOptions())).BuildServiceProvider();
+        var clock = new ManualClock();
+        var log = new FailureLog();
+        using var worker = new EphemeralStateCleanupService(services.GetRequiredService<IServiceScopeFactory>(), log, clock);
+        await worker.StartAsync(ct);
+        try
+        {
+            var timer = await clock.Ready.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
+            timer.Tick();
+            Assert.StartsWith("Blob collection failed", await log.Failed.Task.WaitAsync(TimeSpan.FromSeconds(5), ct));
+            await using var db = database.CreateContext();
+            Assert.Empty(await db.FieldLeaseAttempts.Where(attempt => attempt.ProjectId == project).ToListAsync(ct));
+        }
+        finally { await worker.StopAsync(ct); }
+    }
+
+    private sealed class FailBlobCollection : DbCommandInterceptor
+    {
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("FOR NO KEY UPDATE OF p", StringComparison.Ordinal))
+                throw new NpgsqlException("Temporary collection failure: opaque-payload-sentinel.");
+            return ValueTask.FromResult(result);
+        }
     }
 
     private sealed class FailFirstPrune : DbCommandInterceptor
@@ -70,7 +113,7 @@ public sealed class EphemeralStateCleanupTests(DatabaseFixture database)
 
     private sealed class FailureLog : ILogger<EphemeralStateCleanupService>
     {
-        public TaskCompletionSource Failed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<string> Failed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
         public bool IsEnabled(LogLevel level) => true;
         public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? error, Func<TState, Exception?, string> format)
@@ -79,7 +122,7 @@ public sealed class EphemeralStateCleanupTests(DatabaseFixture database)
             Assert.Contains(nameof(NpgsqlException), format(state, error));
             Assert.Null(error);
             Assert.DoesNotContain("opaque-payload-sentinel", format(state, error));
-            Failed.TrySetResult();
+            Failed.TrySetResult(format(state, error));
         }
     }
 

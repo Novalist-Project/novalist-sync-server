@@ -23,12 +23,13 @@ public sealed class SyncDbContext : DbContext
     public DbSet<ProjectEpochKeyGrant> ProjectEpochKeyGrants => Set<ProjectEpochKeyGrant>();
     public DbSet<ProjectEpochDeviceGrant> ProjectEpochDeviceGrants => Set<ProjectEpochDeviceGrant>();
     public DbSet<ProjectHistoryBoundary> ProjectHistoryBoundaries => Set<ProjectHistoryBoundary>();
+    public DbSet<StoredBlob> Blobs => Set<StoredBlob>();
     public DbSet<StoredBlobChunk> BlobChunks => Set<StoredBlobChunk>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         ConfigureHistory(modelBuilder);
-        ConfigureBlobChunks(modelBuilder);
+        ConfigureBlobs(modelBuilder);
         modelBuilder.Entity<UpdateReceipt>(entry =>
         {
             entry.HasKey(value => new { value.ProjectId, value.SenderDeviceId, value.SenderSeq });
@@ -109,12 +110,24 @@ public sealed class SyncDbContext : DbContext
         });
     }
 
-    private static void ConfigureBlobChunks(ModelBuilder modelBuilder)
+    private static void ConfigureBlobs(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<StoredBlob>(entry =>
+        {
+            entry.HasKey(value => new { value.ProjectId, value.BlobId });
+            entry.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
+            entry.HasIndex(value => value.ProjectId).HasFilter("collectable_at IS NOT NULL").HasDatabaseName("ix_blobs_collectable");
+            entry.ToTable("blobs", table =>
+            {
+                table.HasCheckConstraint("ck_blobs_bytes_stored", "bytes_stored >= 0");
+                table.HasCheckConstraint("ck_blobs_collectable", "collectable_at IS NULL OR unreferenced_since IS NOT NULL");
+            });
+        });
         modelBuilder.Entity<StoredBlobChunk>(entry =>
         {
             entry.HasKey(value => new { value.ProjectId, value.BlobId, value.Index });
             entry.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
+            entry.HasOne<StoredBlob>().WithMany().HasForeignKey(value => new { value.ProjectId, value.BlobId });
             entry.ToTable("blob_chunks", table =>
             {
                 table.HasCheckConstraint("ck_blob_chunks_index", "index >= 0");
