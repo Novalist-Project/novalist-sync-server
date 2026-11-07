@@ -725,6 +725,36 @@ MIME types and keys are only visible inside the encrypted manifest.
 - On member removal, existing blobs stay under their old keys (re-encryption:
   v2).
 
+### 9.4 Implemented chunk transport
+
+Persistence mode exposes `UploadBlobChunk(projectId, blobId, chunk)` and
+`DownloadBlobChunk(projectId, blobId, chunkIndex)` on the authenticated SignalR
+hub. Upload requires write membership; download permits viewers. Verified devices
+must first complete their connection possession proof. Each operation, including
+each chunk request, rechecks device status and membership under the existing
+account and project delivery barriers. Removal and revocation reject later requests
+on an already-open connection. These barriers end before network delivery, so a
+slow downloader cannot hold up revocation. A chunk already authorized may still
+finish delivery after access ends.
+
+Chunks use zero-based integer indices and contain 16–65552 opaque bytes (up to
+64 KiB plaintext plus an authentication tag). Uploads may arrive independently
+and out of order. Identical retries succeed; changing an existing chunk fails.
+Chunk identity is scoped to the project and blob. Each download reads only the
+requested chunk, without buffering a whole blob. Clients transfer large blobs
+incrementally and resume by requesting missing indices. Missing chunks return
+null to authorized members, including while an upload is incomplete. Clients use
+the encrypted manifest's size and authenticated final-chunk marker to detect
+missing chunks or truncation. Out-of-order uploads cannot make a missing lower
+index unreachable.
+
+The hub's receive limit is 128 KiB to accommodate one maximum-sized chunk in
+MessagePack or JSON. `blob_chunks` stores only project ID, opaque blob ID, chunk
+index and ciphertext. No filenames, MIME types, keys or final-chunk flags are
+sent as plaintext. Project deletion removes its chunks. Reference reporting and
+grace-period garbage collection remain future work; unused chunks currently
+remain until project deletion.
+
 ## 10. What the server stores and sees
 
 | Table          | Contents                                                       | Server can read? |

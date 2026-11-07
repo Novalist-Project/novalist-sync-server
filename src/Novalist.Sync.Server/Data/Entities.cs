@@ -1,5 +1,13 @@
 namespace Novalist.Sync.Server.Data;
 
+public sealed class StoredBlobChunk
+{
+    public Guid ProjectId { get; set; }
+    public Guid BlobId { get; set; }
+    public int Index { get; set; }
+    public byte[] Ciphertext { get; set; } = [];
+}
+
 public sealed class User
 {
     public Guid Id { get; set; }

@@ -41,6 +41,7 @@ public sealed partial class ProjectAccess
         await db.ProjectEpochKeyGrants.Where(value => value.ProjectId == projectId).ExecuteDeleteAsync(ct);
         await db.ProjectDeviceAuthorizations.Where(value => value.ProjectId == projectId).ExecuteDeleteAsync(ct);
         await db.Updates.Where(update => update.ProjectId == projectId).ExecuteDeleteAsync(ct);
+        await db.BlobChunks.Where(chunk => chunk.ProjectId == projectId).ExecuteDeleteAsync(ct);
         await db.UpdateReceipts.Where(receipt => receipt.ProjectId == projectId).ExecuteDeleteAsync(ct);
         await db.ProjectHistoryBoundaries.Where(boundary => boundary.ProjectId == projectId).ExecuteDeleteAsync(ct);
         await db.Memberships.Where(member => member.ProjectId == projectId).ExecuteDeleteAsync(ct);

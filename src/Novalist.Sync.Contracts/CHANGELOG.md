@@ -10,6 +10,8 @@ the minor version.
 
 ### Added
 
+- Contracts 1.8.0: Immutable encrypted blob chunk uploads and independently authorized chunk downloads over the authenticated hub. `BlobChunk` and `BlobTransfer` define zero-based chunk indices and a 64 KiB plaintext chunk limit with a 16-byte authentication tag. Clients resume transfers by requesting missing indices. New methods and records are additive; the envelope protocol remains 1.
+
 - Contracts 1.7.0: Field leases: acquire, renew, release and guarded encrypted edits. Grants include server time and catch-up boundaries; fixed acquisition deadlines prevent delayed retries from reviving expired focus. New methods and records are additive.
 
 - Contracts 1.6.0: Epoch rotation: verified project-device certificates, staged checkpoints and opaque key grants, reservations, cancellation, compare-and-set commit, and `ProjectEpochChanged`. `CommitProjectEpoch.RemovedMemberId` may be omitted or null to rotate without removing a member, including after device revocation. New methods and records are additive.

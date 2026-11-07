@@ -7,6 +7,7 @@ using Novalist.Sync.Server.Updates;
 using Novalist.Sync.Server.Data;
 using Novalist.Sync.Server.Hubs;
 using Novalist.Sync.Server.Relay;
+using Novalist.Sync.Server.Blobs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,6 +27,7 @@ else
         .UseSnakeCaseNamingConvention());
 
     builder.Services.AddScoped<UpdateLog>();
+    builder.Services.AddScoped<BlobStore>();
     builder.Services.AddScoped<PresenceAccess>();
     builder.Services.AddScoped<FieldLeaseAccess>();
     builder.Services.AddOptions<UpdateHistoryOptions>().Bind(builder.Configuration.GetSection(UpdateHistoryOptions.Section))
@@ -48,7 +50,11 @@ else
     builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddSingleton<ConnectionRegistry>();
     builder.Services.AddScoped<AccessRevocation>();
-    builder.Services.AddSignalR(options => options.AddFilter<ClientErrorFilter>()).AddMessagePackProtocol();
+    builder.Services.AddSignalR(options =>
+    {
+        options.AddFilter<ClientErrorFilter>();
+        options.MaximumReceiveMessageSize = 128 * 1024;
+    }).AddMessagePackProtocol();
 }
 
 builder.Services
@@ -82,7 +88,7 @@ app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSecond
 if (relayEnabled) app.MapRelayEndpoints();
 else
 {
-    app.MapHub<SyncHub>(Protocol.HubPath);
+    app.MapHub<SyncHub>(Protocol.HubPath, options => options.ApplicationMaxBufferSize = 256 * 1024);
     app.MapDeviceEndpoints();
     app.MapVerifiedDeviceEndpoints();
     app.MapDeviceEnrollmentEndpoint();
