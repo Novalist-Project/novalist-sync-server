@@ -375,8 +375,10 @@ namespace Novalist.Sync.Server.Migrations
                         .HasColumnName("device_id");
 
                     b.Property<DateTimeOffset>("LastActivityAt")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_activity_at");
+                        .HasColumnName("last_activity_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<long>("PreviousEpoch")
                         .HasColumnType("bigint")
@@ -421,6 +423,9 @@ namespace Novalist.Sync.Server.Migrations
 
                     b.HasKey("ProjectId", "FirstServerSeq")
                         .HasName("pk_project_history_boundaries");
+
+                    b.HasIndex("CreatedAt")
+                        .HasDatabaseName("ix_project_history_boundaries_created_at");
 
                     b.ToTable("project_history_boundaries", (string)null);
                 });

@@ -23,7 +23,7 @@ namespace Novalist.Sync.Server.Migrations
                 table: "project_epoch_stages",
                 type: "timestamp with time zone",
                 nullable: false,
-                defaultValue: new DateTimeOffset(new DateTime(1, 1, 1, 0, 0, 0, 0, DateTimeKind.Unspecified), new TimeSpan(0, 0, 0, 0, 0)));
+                defaultValueSql: "CURRENT_TIMESTAMP");
 
             // In-flight reservations keep their original start as their last activity.
             migrationBuilder.Sql("UPDATE project_epoch_stages SET last_activity_at = created_at;");

@@ -378,8 +378,10 @@ namespace Novalist.Sync.Server.Migrations
                         .HasColumnName("device_id");
 
                     b.Property<DateTimeOffset>("LastActivityAt")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_activity_at");
+                        .HasColumnName("last_activity_at")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP");
 
                     b.Property<long>("PreviousEpoch")
                         .HasColumnType("bigint")

@@ -44,6 +44,7 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
         {
             entry.HasIndex(value => value.CreatedAt);
             entry.HasIndex(value => value.LastActivityAt);
+            entry.Property(value => value.LastActivityAt).HasDefaultValueSql("CURRENT_TIMESTAMP");
             entry.Property(value => value.Id).ValueGeneratedNever();
             entry.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
         });
@@ -112,6 +113,7 @@ public sealed class SyncDbContext(DbContextOptions<SyncDbContext> options) : DbC
         modelBuilder.Entity<ProjectHistoryBoundary>(entry =>
         {
             entry.HasKey(value => new { value.ProjectId, value.FirstServerSeq });
+            entry.HasIndex(value => value.CreatedAt);
             entry.HasOne<Project>().WithMany().HasForeignKey(value => value.ProjectId);
         });
     }

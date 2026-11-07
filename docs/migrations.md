@@ -23,7 +23,9 @@ tables and cannot recover invitation links or activation retries.
 
 `EpochCompaction` adds `projects.history_starts_at` (1 for projects that never
 rotated), the `project_history_boundaries` table and a sliding
-`project_epoch_stages.last_activity_at`. Projects that already rotated are
+`project_epoch_stages.last_activity_at`. Existing reservations retain their start
+time as their last activity; inserts that omit the new column default to the
+database transaction time. Projects that already rotated are
 backfilled from their stored key grants; their boundaries get the upgrade time,
 so the compaction grace period starts with the upgrade. Rolling it back is
 harmless until the cleanup job has deleted superseded updates. After that, a
@@ -33,9 +35,14 @@ restore a backup instead of rolling back.
 `CompactedUpdateReceipts` adds compact retry receipts. Cleanup moves superseded
 updates into receipts atomically, retaining sequence numbers and SHA-256 hashes
 of each envelope field while deleting the payload bytes. No extension is needed;
-PostgreSQL provides `sha256(bytea)`. Apply both compaction migrations before
+PostgreSQL provides `sha256(bytea)`. Apply all compaction migrations before
 starting the new server; stop the old server during upgrade. Existing updates
 remain unchanged until cleanup runs. Receipts are retained until project deletion.
 Rolling this migration back drops retry receipts and cannot restore pruned
 payloads. After compaction, restore a backup before returning to an older server;
 reapplying the migration alone cannot recover lost retry acknowledgements.
+
+`HistoryBoundaryCreatedAtIndex` indexes boundary creation times for grace-period
+cleanup and repairs the activity default on databases that applied an earlier
+revision of `EpochCompaction`. Rolling it back removes only the index; the safe
+`CURRENT_TIMESTAMP` default remains.
