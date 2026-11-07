@@ -73,18 +73,37 @@ public sealed class EphemeralStateCleanupService(IServiceScopeFactory scopes, IL
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1), clock);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            try
-            {
-                await using var scope = scopes.CreateAsyncScope();
-                var compacted = await scope.ServiceProvider.GetRequiredService<EphemeralStateCleanup>().PruneAsync(stoppingToken);
-                if (compacted > 0) logger.LogInformation("Deleted {Count} updates superseded by rotation checkpoints.", compacted);
-                var collected = await scope.ServiceProvider.GetRequiredService<BlobCollector>().CollectAsync(stoppingToken);
-                if (collected > 0) logger.LogInformation("Deleted {Count} unreferenced blobs.", collected);
-            }
-            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
-            {
-                logger.LogWarning("Ephemeral state cleanup failed ({ErrorType}); it will retry on the next tick.", error.GetType().Name);
-            }
+            await PruneAsync(stoppingToken);
+            await CollectBlobsAsync(stoppingToken);
+        }
+    }
+
+    private async Task PruneAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var compacted = await scope.ServiceProvider.GetRequiredService<EphemeralStateCleanup>().PruneAsync(stoppingToken);
+            if (compacted > 0) logger.LogInformation("Deleted {Count} updates superseded by rotation checkpoints.", compacted);
+        }
+        catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+        {
+            logger.LogWarning("Ephemeral state cleanup failed ({ErrorType}); it will retry on the next tick.", error.GetType().Name);
+        }
+    }
+
+    // Separate from pruning, so either failure is reported accurately and doesn't skip the other.
+    private async Task CollectBlobsAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            await using var scope = scopes.CreateAsyncScope();
+            var collected = await scope.ServiceProvider.GetRequiredService<BlobCollector>().CollectAsync(stoppingToken);
+            if (collected > 0) logger.LogInformation("Deleted {Count} unreferenced blobs.", collected);
+        }
+        catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+        {
+            logger.LogWarning("Blob collection failed ({ErrorType}); it will retry on the next tick.", error.GetType().Name);
         }
     }
 }
