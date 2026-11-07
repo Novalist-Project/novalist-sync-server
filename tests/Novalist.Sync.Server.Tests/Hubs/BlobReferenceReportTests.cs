@@ -24,9 +24,9 @@ public sealed class BlobReferenceReportTests(DatabaseFixture database)
         await hub.StartAsync(ct);
         var kept = Guid.NewGuid();
         var dropped = Guid.NewGuid();
-        var payload = RandomNumberGenerator.GetBytes(32);
-        await UploadAsync(hub, project, kept, new(0, payload), ct);
-        await UploadAsync(hub, project, dropped, new(0, RandomNumberGenerator.GetBytes(16)), ct);
+        var payloads = new[] { RandomNumberGenerator.GetBytes(32), RandomNumberGenerator.GetBytes(16) };
+        await UploadAsync(hub, project, kept, new(0, payloads[0]), ct);
+        await UploadAsync(hub, project, dropped, new(0, payloads[1]), ct);
 
         await ReportAsync(hub, project, [kept, kept, Guid.NewGuid()], ct);
 
@@ -39,7 +39,11 @@ public sealed class BlobReferenceReportTests(DatabaseFixture database)
         Assert.Contains(server.Logs.Entries, entry => entry.Message.Contains("reported 2 referenced blobs", StringComparison.Ordinal));
         foreach (var entry in server.Logs.Entries)
         {
-            Assert.DoesNotContain(Convert.ToBase64String(payload), entry.Message + entry.Exception + entry.ScopeText);
+            foreach (var payload in payloads)
+            {
+                Assert.DoesNotContain(Convert.ToBase64String(payload), entry.Message + entry.Exception + entry.ScopeText);
+                Assert.DoesNotContain(Convert.ToHexString(payload), entry.Message + entry.Exception + entry.ScopeText, StringComparison.OrdinalIgnoreCase);
+            }
             Assert.DoesNotContain(entry.Values.Concat(entry.ScopeValues), value => value is byte[]);
         }
     }
@@ -96,7 +100,8 @@ public sealed class BlobReferenceReportTests(DatabaseFixture database)
         else
             await scope.ServiceProvider.GetRequiredService<DeviceRegistry>().RevokeAsync(user.Id, device, ct);
 
-        await Assert.ThrowsAnyAsync<Exception>(() => ReportAsync(hub, project, [], ct));
+        // The services are called directly, so the connection stays open and the hub's access check must reject.
+        await Assert.ThrowsAsync<HubException>(() => ReportAsync(hub, project, [], ct));
         await using var db = database.CreateContext();
         Assert.Null(await db.Blobs.Where(value => value.ProjectId == project).Select(value => value.UnreferencedSince).SingleAsync(ct));
     }
