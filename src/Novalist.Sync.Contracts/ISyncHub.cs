@@ -16,6 +16,9 @@ public interface ISyncHub
     Task StageProjectEpochGrant(Guid rotationId, ProjectEpochGrant grant);
     Task CommitProjectEpoch(CommitProjectEpoch request);
     Task<StoredProjectEpochGrant?> GetProjectEpochGrant(Guid projectId, uint afterEpoch);
+    Task<StoredProjectEpochGrant?> GetLatestProjectEpochGrant(Guid projectId);
+    Task<IReadOnlyList<PendingProjectDevice>> ListPendingProjectDevices(Guid projectId);
+    Task AuthorizeProjectDevice(AuthorizeProjectDevice request);
     Task<IReadOnlyList<ProjectMember>> ListProjectMembers(Guid projectId);
     Task RemoveProjectMember(Guid projectId, Guid memberId);
     Task DeleteProject(Guid projectId);

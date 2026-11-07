@@ -4,6 +4,7 @@ public interface ISyncClient
 {
     Task ProjectEpochChanged(Guid projectId, uint epoch);
     Task ProjectAccessEnded(Guid projectId);
+    Task ProjectDeviceAuthorized(Guid projectId);
     Task ReceiveUpdate(SequencedEnvelope envelope);
     Task ReceivePresence(Envelope envelope);
 }

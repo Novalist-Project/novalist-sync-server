@@ -10,6 +10,8 @@ the minor version.
 
 ### Added
 
+- Contracts 1.10.0: Owner authorization of members' unregistered devices. `ListPendingProjectDevices` returns members' active, unauthorized devices with their linking chains (`PendingProjectDevice`, `ProjectDeviceLink`, capped at `ProjectDeviceAuthorizationLimits.MaximumLinkChain`). `AuthorizeProjectDevice` stores an owner-signed certificate and an opaque current-epoch key grant atomically; it is rejected while a key rotation is reserved. The device receives `ProjectDeviceAuthorized` and reads its grant with `GetLatestProjectEpochGrant`, which also returns epoch 0 grants. New methods, records and the client callback are additive; the envelope protocol remains 1.
+
 - Contracts 1.9.0: Blob garbage collection. Writers that have caught up to the whole log stream every blob ID their current manifest references to `ReportBlobReferences`, together with that `caughtUpToServerSeq`; reports behind or beyond the log are rejected. `BlobTransfer.MaximumReportedReferences` bounds one report. A report marks each blob it omits as unreferenced. The blob becomes collectable only when a later report, sent at least the server's grace period after the first, still omits it. Uploading a new chunk to a blob clears its marks. The method and constant are additive; the envelope protocol remains 1.
 
 - Contracts 1.8.0: Immutable encrypted blob chunk uploads and independently authorized chunk downloads over the authenticated hub. `BlobChunk` and `BlobTransfer` define zero-based chunk indices and a 64 KiB plaintext chunk limit with a 16-byte authentication tag. Clients resume transfers by requesting missing indices. New methods and records are additive; the envelope protocol remains 1.

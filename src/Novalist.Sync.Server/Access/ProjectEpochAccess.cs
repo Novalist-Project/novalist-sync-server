@@ -124,7 +124,8 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
         return stage.Count;
     }
 
-    public async Task<StoredProjectEpochGrant?> ReadGrantAsync(Guid user, Guid device, Guid project, uint afterEpoch, CancellationToken ct)
+    // afterEpoch -1 returns the latest grant, including one for epoch 0 from AuthorizeDeviceAsync.
+    public async Task<StoredProjectEpochGrant?> ReadGrantAsync(Guid user, Guid device, Guid project, long afterEpoch, CancellationToken ct)
     {
         await projects.EnsureCanReadAsync(user, project, ct);
         if (!await db.Devices.AnyAsync(value => value.Id == device && value.UserId == user && value.RevokedAt == null, ct))
