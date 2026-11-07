@@ -145,7 +145,7 @@ Responsibilities:
 | Novalist fork        | `Novalist.Sync.Client` (new)                         | Crypto, keys, durable Yjs log, outgoing queue, connection, sealing snapshots. No CRDT code.           |
 | Novalist fork        | `Novalist.Backend` / `Novalist.Core` (small changes) | Host Sync.Client, new `sync.*` JSON-RPC methods, write projections, hook into file watcher            |
 | Novalist fork        | `app/` (changes)                                     | Yjs host, `YjsDocumentManager`, editor binding, remote cursors, sync and sharing screens              |
-| novalist-sync-server | `Novalist.Sync.Server`                               | Hub, auth, persistence, blob endpoints, snapshot retention                                            |
+| novalist-sync-server | `Novalist.Sync.Server`                               | Hub, auth, persistence, blob endpoints, epoch-boundary retention                                      |
 | novalist-sync-server | `Novalist.Sync.Contracts`                            | Wire records, hub interface, protocol version. Published as a **NuGet package** consumed by the fork. |
 
 Changes to Novalist itself are kept as small and isolated as possible so they
@@ -557,10 +557,11 @@ Clients are expected to trigger rotations by log size, not by the calendar
 (e.g. when the log since the boundary exceeds four times the checkpoint, at most
 daily, while idle), and to batch editor updates (250 ms) before saving them.
 
-**Not implemented (original plan, superseded in practice; D8/D9 in §11 still
-describe it):** per-item snapshots every 500 updates sealed with `K_snapshot`,
-deletion of updates covered by them, and tiered snapshot retention (hourly for
-24 hours, daily for 30 days, weekly beyond that) as shared version history.
+**Superseded original plan:** per-item snapshots every 500 updates sealed with
+`K_snapshot`, deletion of updates covered by them, and tiered snapshot retention
+(hourly for 24 hours, daily for 30 days, weekly beyond that) as shared version
+history are not implemented. Epoch checkpoints and their compaction grace period
+are the current server retention contract (D8/D9 in §11).
 Novalist's local per-scene snapshots continue to work as before.
 
 ### 8.5 Adding a member
@@ -605,8 +606,11 @@ remember verified keys and **warn loudly** when a known user's keys change.
 
 1. Create `EK_{e+1}` (compare-and-set, §6.2).
 2. Wrap it only for remaining devices.
-3. Upload fresh snapshots of all items under the new epoch.
-4. Server drops the membership/device and stops serving updates and blobs to it.
+3. Stage a fresh whole-project checkpoint as update envelopes under the new
+   epoch. Each remaining device's signed key grant records `FirstServerSeq`.
+4. Commit the checkpoint, key grants, epoch advance and history boundary together
+   (§8.4). The server removes the member's access and stops serving updates and
+   blobs to removed or revoked devices.
 
 ### 8.8 Presence
 
@@ -950,8 +954,8 @@ Roles per membership:
 | D5  | History for new members | Full history by default (all epoch keys wrapped)                                               |
 | D6  | Recovery                | Recovery key in v1, implemented as a derived recovery device                                   |
 | D7  | Key rotation            | On member removal, device revocation, and every 30 days                                        |
-| D8  | Version history         | Tiered snapshots: hourly 24 h, daily 30 d, weekly after                                        |
-| D9  | Snapshot trigger        | Every 500 updates per item, or on project close                                                |
+| D8  | Version history         | _Revised 2026-11-07:_ Whole-project epoch checkpoints; superseded updates retained for a configurable grace period (default 30 days), then compacted (§8.4). Shared tiered snapshot history is not implemented; local per-scene history remains unchanged. |
+| D9  | Checkpoint trigger      | _Revised 2026-11-07:_ Checkpoint on epoch rotation (§8.7); clients should also trigger rotation by log size (§8.4). Replaces the original every-500-updates/project-close snapshot plan. |
 | D10 | Forward secrecy         | Not in v1 (rationale §1); rotation + compaction instead                                        |
 | D11 | Login                   | External OIDC provider (Keycloak, authentik); users identified by issuer + subject (§10.1)     |
 | D12 | Sync is optional        | Per project, off by default; local-only projects need no account, server or network (§5.4)    |
@@ -1053,7 +1057,7 @@ default until the binding is validated.
    5. Identity keys, device authentication, wrapping, signatures, membership,
       safety numbers.
    6. Whole project: structure doc, Codex, file manifest + blobs.
-   7. Snapshots, compaction, tiered retention.
+   7. Whole-project epoch checkpoints, compaction, grace-period retention (§8.4).
    8. Epochs: removal, revocation, monthly rotation.
    9. Recovery key, device linking.
 5. **Stabilization.** Regression tests against existing projects and editor
