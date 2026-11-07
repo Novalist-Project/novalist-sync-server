@@ -114,7 +114,7 @@ Accepted limitations:
 │ novalist-sync-server (ASP.NET Core)                                │
 │   ├─ SignalR hub (relay, catch-up, presence)                       │
 │   ├─ Auth + membership                                             │
-│   ├─ PostgreSQL (log, snapshots, wrapped keys, epochs)             │
+│   ├─ PostgreSQL (update log, key grants, epoch boundaries)          │
 │   └─ Blob store (encrypted chunks)                                 │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -142,7 +142,7 @@ Responsibilities:
 
 | Repo                 | Project                                              | Contents                                                                                              |
 | -------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Novalist fork        | `Novalist.Sync.Client` (new)                         | Crypto, keys, durable Yjs log, outgoing queue, connection, sealing snapshots. No CRDT code.           |
+| Novalist fork        | `Novalist.Sync.Client` (new)                         | Crypto, keys, durable Yjs log, outgoing queue, connection, sealing checkpoint updates. No CRDT code. |
 | Novalist fork        | `Novalist.Backend` / `Novalist.Core` (small changes) | Host Sync.Client, new `sync.*` JSON-RPC methods, write projections, hook into file watcher            |
 | Novalist fork        | `app/` (changes)                                     | Yjs host, `YjsDocumentManager`, editor binding, remote cursors, sync and sharing screens              |
 | novalist-sync-server | `Novalist.Sync.Server`                               | Hub, auth, persistence, blob endpoints, epoch-boundary retention                                      |
@@ -371,6 +371,10 @@ K_snapshot = HKDF(EK_e, salt = projectId, info = "novalist/v1/snapshot")
 K_presence = HKDF(EK_e, salt = projectId, info = "novalist/v1/presence")
 ```
 
+`K_snapshot` belongs to the original per-item snapshot plan. Implemented
+bootstrap and epoch checkpoints use `msgType.Update` envelopes sealed with
+`K_update`; the server has no separate snapshot storage or endpoint.
+
 **A new epoch starts when:**
 
 - a member is removed,
@@ -379,7 +383,8 @@ K_presence = HKDF(EK_e, salt = projectId, info = "novalist/v1/presence")
 
 Rotation is a compare-and-set on the server: the first client to submit epoch
 `e+1` wins; a client whose rotation is rejected adopts the winner's epoch. Old
-epoch keys are kept, so history stays readable.
+epoch keys are kept, so retained encrypted data stays readable. Keeping keys
+does not preserve updates removed by compaction (§8.4).
 
 **Blob keys.** Each blob has its own random 32-byte key, stored inside the
 encrypted file manifest (§9.2).
@@ -467,6 +472,11 @@ Encoding rules:
 selection state for `presence`. The server cannot tell them apart beyond
 `msgType`.
 
+The `snapshot` message type remains defined in the wire format for the original
+snapshot plan, but `Push` and epoch checkpoint staging accept only `update`
+messages. Bootstrap and checkpoint state are encoded as update payloads, not as
+separately stored snapshot messages.
+
 ```
 nonce      = random(24)
 ciphertext = XChaCha20Poly1305.Encrypt(K_type, nonce, payload, aad = header)
@@ -486,8 +496,11 @@ envelope   = { header, nonce, ciphertext, signature }
    sync and leaves the project untouched, so enabling sync can never change
    content.
 3. .NET stores the initial states durably (§5.5), uploads assets as blobs (§9),
-   wraps `EK_0` for the user's own devices and recovery device, and uploads the
-   wrapped keys and an initial snapshot of every item.
+   and arranges `EK_0` grants for the user's own devices and recovery device.
+   The client encodes each item's initial state as ordinary `msgType.Update`
+   envelopes under epoch 0 and sends them through `Push`. The server stores
+   these bootstrap updates in `updates`, just like later edits; it does not
+   receive separate snapshot uploads.
 
 The project files are not rewritten in the process.
 
@@ -541,6 +554,12 @@ so the server:
   recovered from the old updates. Each boundary keeps its own timestamp, so
   frequent rotations don't postpone deletion.
 
+Checkpoint envelopes are temporarily staged in `project_epoch_envelopes`, then
+copied into `updates` in the rotation transaction. Staging rows are deleted when
+the rotation commits. There is no server `snapshots` table. Initial bootstrap
+updates (§8.1), rotation checkpoint updates, and later edits all share the same
+ordered log; local per-scene snapshots are a separate client feature.
+
 Pruning atomically replaces each deleted update with an `update_receipts` row:
 project/device IDs, sender/server sequences, and separate SHA-256 hashes of the
 opaque header, nonce, ciphertext and signature. PostgreSQL's built-in hash function
@@ -569,9 +588,17 @@ Novalist's local per-scene snapshots continue to work as before.
 1. Inviter fetches the invitee's device list (with linking signatures) and
    verifies it.
 2. Inviter shows the safety number (§8.6).
-3. Inviter wraps **all epoch keys** for each invitee device and recovery device
-   — new members see full history by default.
+3. Inviter arranges epoch-key grants for each invitee device and recovery device
+   sufficient to decrypt the retained checkpoint and subsequent updates (§8.4).
 4. Server records membership.
+
+New members bootstrap from the current whole-project checkpoint and updates
+starting at `history_starts_at`. Before the first rotation, they replay the
+initial bootstrap updates and subsequent edits from sequence 1. This provides
+the current project state, not its full historical edit log. `CatchUp` refuses
+positions before the current boundary even while superseded bytes remain during
+the recovery grace period. Sharing older epoch keys cannot restore pruned data;
+there is no server bootstrap path that supplies pre-boundary history.
 
 The implemented membership API also supports a single-use invitation link.
 The HTTP flow below is for accounts without verified devices. Verified accounts
@@ -718,7 +745,6 @@ MIME types and keys are only visible inside the encrypted manifest.
 | `wrapped_keys` | §6.3 records                                                   | no               |
 | `updates`      | serverSeq, header, nonce, ciphertext, signature                | header only      |
 | `update_receipts` | project/device IDs, sender/server sequences, SHA-256 hashes of each opaque envelope field | metadata; no payload bytes |
-| `snapshots`    | coversServerSeq, timestamp, envelope                           | header only      |
 | `blob_chunks`  | blobId, index, ciphertext                                      | no               |
 
 Visible metadata: project and item counts, member lists, devices, timestamps,
@@ -951,7 +977,7 @@ Roles per membership:
 | D2  | Integration             | Fork Novalist, keep changes small, offer upstream as PR                                        |
 | D3  | Where CRDT + crypto run | _Revised 2026-10-19:_ CRDT in JavaScript (Yjs, §4.3); crypto, keys, SignalR in .NET. No YDotNet. Renderer and Yjs host get no keys. (Was: all in .NET with YDotNet.) |
 | D4  | Sync scope              | Whole project: scenes live, Codex/metadata as CRDT maps, files as encrypted blobs              |
-| D5  | History for new members | Full history by default (all epoch keys wrapped)                                               |
+| D5  | History for new members | _Revised 2026-11-07:_ Current state from the retained checkpoint and subsequent updates, or the initial update log before the first rotation (§8.4–8.5). No pre-boundary edit-history guarantee; epoch keys do not restore pruned data. |
 | D6  | Recovery                | Recovery key in v1, implemented as a derived recovery device                                   |
 | D7  | Key rotation            | On member removal, device revocation, and every 30 days                                        |
 | D8  | Version history         | _Revised 2026-11-07:_ Whole-project epoch checkpoints; superseded updates retained for a configurable grace period (default 30 days), then compacted (§8.4). Shared tiered snapshot history is not implemented; local per-scene history remains unchanged. |
