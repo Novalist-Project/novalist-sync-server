@@ -58,8 +58,6 @@ public sealed partial class ProjectEpochAccess
                 .SetProperty(value => value.EpochStartedAt, DateTimeOffset.UtcNow)
                 .SetProperty(value => value.HistoryStartsAt, historyStartsAt), ct);
         if (advanced != 1) throw new ConflictException("The project changed during key rotation. Refresh and try again.");
-        var committedAt = await DatabaseTimeAsync(ct);
-        db.ProjectHistoryBoundaries.Add(new() { ProjectId = project.Id, FirstServerSeq = historyStartsAt, CreatedAt = committedAt });
         await db.SaveChangesAsync(ct);
         await CopyCheckpointAsync(user, stage, ct);
         if (request.RemovedMemberId is { } memberId)
@@ -69,9 +67,11 @@ public sealed partial class ProjectEpochAccess
         }
         await db.Invitations.Where(value => value.ProjectId == project.Id).ExecuteUpdateAsync(set => set.SetProperty(value => value.ExpiresAt, DateTimeOffset.UnixEpoch), ct);
         await db.FieldLeases.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
-        await db.SaveChangesAsync(ct);
         var checkpointBytes = await db.ProjectEpochEnvelopes.Where(value => value.RotationId == stage.Id).SumAsync(value => (long)value.Payload.Length, ct);
         await db.ProjectEpochStages.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
+        var committedAt = await DatabaseTimeAsync(ct);
+        db.ProjectHistoryBoundaries.Add(new() { ProjectId = project.Id, FirstServerSeq = historyStartsAt, CreatedAt = committedAt });
+        await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         log.LogInformation(
             "Committed epoch {Epoch} for project {ProjectId}: history starts at {HistoryStartsAt}, checkpoint {EnvelopeCount} envelopes / {CheckpointBytes} bytes, staged for {StagedSeconds:F1}s.",
