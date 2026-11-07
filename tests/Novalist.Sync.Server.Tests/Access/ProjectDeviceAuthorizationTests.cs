@@ -80,16 +80,16 @@ public sealed class ProjectDeviceAuthorizationTests(DatabaseFixture database)
     }
 
     [Theory]
-    [InlineData("non-owner")]
-    [InlineData("stale epoch")]
-    [InlineData("unregistered caller")]
-    [InlineData("revoked caller")]
-    [InlineData("outsider device")]
-    [InlineData("revoked device")]
-    [InlineData("device without keys")]
-    [InlineData("removed member")]
-    [InlineData("missing grant")]
-    public async Task InvalidAuthorizationsAreRejectedWithoutStoringAnything(string scenario)
+    [InlineData("non-owner", typeof(AccessDeniedException))]
+    [InlineData("stale epoch", typeof(ConflictException))]
+    [InlineData("unregistered caller", typeof(AccessDeniedException))]
+    [InlineData("revoked caller", typeof(AccessDeniedException))]
+    [InlineData("outsider device", typeof(AccessDeniedException))]
+    [InlineData("revoked device", typeof(AccessDeniedException))]
+    [InlineData("device without keys", typeof(AccessDeniedException))]
+    [InlineData("removed member", typeof(AccessDeniedException))]
+    [InlineData("missing grant", typeof(FormatException))]
+    public async Task InvalidAuthorizationsAreRejectedWithoutStoringAnything(string scenario, Type expected)
     {
         var ct = TestContext.Current.CancellationToken;
         var (owner, ownerDevice, member, project) = await CreateProjectAsync();
@@ -119,10 +119,8 @@ public sealed class ProjectDeviceAuthorizationTests(DatabaseFixture database)
         }
         db.ChangeTracker.Clear();
 
-        var error = await Record.ExceptionAsync(() => service.AuthorizeDeviceAsync(caller.Item1, caller.Item2, request, ct));
+        await Assert.ThrowsAsync(expected, () => service.AuthorizeDeviceAsync(caller.Item1, caller.Item2, request, ct));
 
-        Assert.True(error is AccessDeniedException or ConflictException or FormatException, error?.ToString() ?? "No exception was thrown.");
-        if (scenario == "stale epoch") Assert.IsType<ConflictException>(error);
         Assert.False(await db.ProjectDeviceAuthorizations.AnyAsync(value => value.ProjectId == project && value.DeviceId == target, ct));
         Assert.False(await db.ProjectEpochKeyGrants.AnyAsync(value => value.ProjectId == project && value.DeviceId == target, ct));
     }
