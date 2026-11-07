@@ -202,6 +202,16 @@ public sealed class TransportSecurityTests(DatabaseFixture database)
     }
 
     [Fact]
+    public async Task RelayPathsAreLimitedLikeAnyPathOutsideRelayMode()
+    {
+        await using var server = new SyncServer(database, settings: new Dictionary<string, string> { ["Transport:RequestsPerMinutePerIp"] = "1" });
+
+        Assert.NotEqual(429, await SendAsync(server, "/relay/v1/host", "https", "203.0.113.7", null));
+
+        Assert.Equal(429, await SendAsync(server, "/relay/v1/host", "https", "203.0.113.7", null));
+    }
+
+    [Fact]
     public async Task HubCallBurstBelowTheSustainedRatePreventsStartup()
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Production" });

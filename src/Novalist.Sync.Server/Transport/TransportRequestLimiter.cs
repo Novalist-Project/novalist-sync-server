@@ -9,11 +9,18 @@ namespace Novalist.Sync.Server.Transport;
 public sealed class TransportRequestLimiter : IDisposable
 {
     private static readonly object ChargeItem = new();
+    private readonly bool relayEnabled;
 
-    public TransportRequestLimiter() => Limiter = PartitionedRateLimiter.CreateChained(
-        PerMinute(_ => "all", value => value.RequestsPerMinute),
-        PerMinute(context => ClientAddress.Key(context.Connection.RemoteIpAddress), value => value.RequestsPerMinutePerIp),
-        PerMinute(Account, value => value.RequestsPerMinutePerAccount));
+    // The instance bucket comes first: a chained acquisition stops at the first refusal, so per-address and
+    // per-account buckets are only created for admitted requests. Buckets idle for 10 seconds are evicted.
+    public TransportRequestLimiter(IConfiguration configuration)
+    {
+        relayEnabled = configuration.GetValue("Relay:Enabled", false);
+        Limiter = PartitionedRateLimiter.CreateChained(
+            PerMinute(_ => "all", value => value.RequestsPerMinute),
+            PerMinute(context => ClientAddress.Key(context.Connection.RemoteIpAddress), value => value.RequestsPerMinutePerIp),
+            PerMinute(Account, value => value.RequestsPerMinutePerAccount));
+    }
 
     public PartitionedRateLimiter<HttpContext> Limiter { get; }
 
@@ -42,9 +49,9 @@ public sealed class TransportRequestLimiter : IDisposable
 
     public void Dispose() => Limiter.Dispose();
 
-    // Relay endpoints have their own quotas.
-    internal static bool Counted(HttpContext context) =>
-        !context.Request.Path.StartsWithSegments("/relay/v1") && (!HasConnectionToken(context) || context.Items.ContainsKey(ChargeItem));
+    // Relay endpoints have their own quotas, but only exist in relay mode; otherwise the prefix is counted like any path.
+    internal bool Counted(HttpContext context) =>
+        !(relayEnabled && context.Request.Path.StartsWithSegments("/relay/v1")) && (!HasConnectionToken(context) || context.Items.ContainsKey(ChargeItem));
 
     private static bool HasConnectionToken(HttpContext context) =>
         context.Request.Path.StartsWithSegments(Protocol.HubPath, out var rest) &&
@@ -55,7 +62,7 @@ public sealed class TransportRequestLimiter : IDisposable
             ? issuer + "\n" + subject
             : null;
 
-    private static PartitionedRateLimiter<HttpContext> PerMinute(Func<HttpContext, string?> key, Func<TransportOptions, int> limit) =>
+    private PartitionedRateLimiter<HttpContext> PerMinute(Func<HttpContext, string?> key, Func<TransportOptions, int> limit) =>
         PartitionedRateLimiter.Create<HttpContext, string>(context =>
         {
             if (!Counted(context) || key(context) is not { } partition) return RateLimitPartition.GetNoLimiter("");
