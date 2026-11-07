@@ -20,7 +20,7 @@ namespace Novalist.Sync.Server.Tests.Infrastructure;
 // The real server (Program.cs) in memory, pointed at the test database and
 // configured to trust TestTokens instead of an external identity provider.
 public sealed class SyncServer(DatabaseFixture database, TimeProvider? clock = null, DbCommandInterceptor? commands = null,
-    HubLifetimeManager<SyncHub>? lifetime = null) : WebApplicationFactory<Program>
+    HubLifetimeManager<SyncHub>? lifetime = null, long? blobQuota = null) : WebApplicationFactory<Program>
 {
     public const string PublicUrl = "https://sync.example/";
     public CapturedLogs Logs { get; } = new();
@@ -33,6 +33,7 @@ public sealed class SyncServer(DatabaseFixture database, TimeProvider? clock = n
         builder.UseSetting("Relay:Enabled", "false");
         builder.UseSetting("ConnectionStrings:Default", database.ConnectionString);
         builder.UseSetting("Collaboration:ServerUrl", PublicUrl);
+        if (blobQuota is { } quota) builder.UseSetting("BlobStorage:MaxProjectBytes", quota.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
         builder.ConfigureLogging(logging => logging
             .ClearProviders()

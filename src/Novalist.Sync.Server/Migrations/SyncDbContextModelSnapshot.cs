@@ -211,6 +211,12 @@ namespace Novalist.Sync.Server.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<long>("BlobBytesStored")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L)
+                        .HasColumnName("blob_bytes_stored");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -236,6 +242,8 @@ namespace Novalist.Sync.Server.Migrations
 
                     b.ToTable("projects", null, t =>
                         {
+                            t.HasCheckConstraint("ck_projects_blob_bytes_stored", "blob_bytes_stored >= 0");
+
                             t.HasCheckConstraint("ck_projects_history_starts_at", "history_starts_at >= 1");
                         });
                 });

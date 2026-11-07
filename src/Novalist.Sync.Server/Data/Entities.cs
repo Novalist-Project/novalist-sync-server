@@ -37,6 +37,7 @@ public sealed class Project
     public DateTimeOffset EpochStartedAt { get; set; }
     public long LastServerSeq { get; set; }
     public long HistoryStartsAt { get; set; } = 1;
+    public long BlobBytesStored { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
 

@@ -28,6 +28,9 @@ else
 
     builder.Services.AddScoped<UpdateLog>();
     builder.Services.AddScoped<BlobStore>();
+    builder.Services.AddOptions<BlobStorageOptions>().Bind(builder.Configuration.GetSection(BlobStorageOptions.Section))
+        .ValidateDataAnnotations()
+        .ValidateOnStart();
     builder.Services.AddScoped<PresenceAccess>();
     builder.Services.AddScoped<FieldLeaseAccess>();
     builder.Services.AddOptions<UpdateHistoryOptions>().Bind(builder.Configuration.GetSection(UpdateHistoryOptions.Section))

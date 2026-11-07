@@ -46,8 +46,11 @@ public sealed class BlobTransferTests(DatabaseFixture database)
         Assert.Equal(0, (await db.Projects.SingleAsync(value => value.Id == project, ct)).LastServerSeq);
         foreach (var entry in server.Logs.Entries)
         {
-            Assert.DoesNotContain(Convert.ToBase64String(first.Ciphertext), entry.Message + entry.Exception + entry.ScopeText);
-            Assert.DoesNotContain(Convert.ToHexString(first.Ciphertext), entry.Message + entry.Exception + entry.ScopeText);
+            foreach (var ciphertext in new[] { first.Ciphertext, last.Ciphertext })
+            {
+                Assert.DoesNotContain(Convert.ToBase64String(ciphertext), entry.Message + entry.Exception + entry.ScopeText);
+                Assert.DoesNotContain(Convert.ToHexString(ciphertext), entry.Message + entry.Exception + entry.ScopeText);
+            }
             Assert.DoesNotContain(entry.Values.Concat(entry.ScopeValues), value => value is byte[]);
         }
     }
@@ -153,28 +156,25 @@ public sealed class BlobTransferTests(DatabaseFixture database)
     }
 
     [Fact]
-    public async Task ConcurrentUploadsCannotOverwriteAChunk()
+    public async Task ProjectQuotaBoundsDistinctBlobsAndAllowsConfirmedRetries()
     {
         var ct = TestContext.Current.CancellationToken;
-        await using var server = new SyncServer(database);
+        await using var server = new SyncServer(database, blobQuota: 32);
         var user = await database.CreateUserAsync();
         var device = await database.CreateDeviceAsync(user.Id);
         var project = await database.CreateProjectAsync((user.Id, MembershipRole.Owner));
-        await using var first = server.CreateHubConnection(TestTokens.Create(user.Subject), device);
-        await using var second = server.CreateHubConnection(TestTokens.Create(user.Subject), device);
-        await first.StartAsync(ct);
-        await second.StartAsync(ct);
+        await using var hub = server.CreateHubConnection(TestTokens.Create(user.Subject), device);
+        await hub.StartAsync(ct);
         var blob = Guid.NewGuid();
-        var left = new BlobChunk(0, RandomNumberGenerator.GetBytes(32));
-        var right = new BlobChunk(0, RandomNumberGenerator.GetBytes(32));
-        var errors = await Task.WhenAll(
-            Record.ExceptionAsync(() => UploadAsync(first, project, blob, left, ct)).AsTask(),
-            Record.ExceptionAsync(() => UploadAsync(second, project, blob, right, ct)).AsTask());
-        Assert.Single(errors, error => error is null);
-        Assert.IsType<HubException>(Assert.Single(errors, error => error is not null));
-        var stored = await DownloadChunkAsync(first, project, blob, 0, ct);
-        Assert.NotNull(stored);
-        Assert.Equal(errors[0] is null ? left.Ciphertext : right.Ciphertext, stored.Ciphertext);
+        var chunk = new BlobChunk(0, RandomNumberGenerator.GetBytes(32));
+        await UploadAsync(hub, project, blob, chunk, ct);
+        await UploadAsync(hub, project, blob, chunk, ct);
+        var error = await Assert.ThrowsAsync<HubException>(() => UploadAsync(hub, project, Guid.NewGuid(), new(0, new byte[16]), ct));
+        Assert.Contains("quota", error.Message);
+        Assert.Equal(chunk.Ciphertext, (await DownloadChunkAsync(hub, project, blob, 0, ct))!.Ciphertext);
+        await using var db = database.CreateContext();
+        Assert.Equal(32, await db.Projects.Where(value => value.Id == project).Select(value => value.BlobBytesStored).SingleAsync(ct));
+        Assert.Equal(1, await db.BlobChunks.CountAsync(value => value.ProjectId == project, ct));
     }
 
     [Fact]
@@ -186,8 +186,10 @@ public sealed class BlobTransferTests(DatabaseFixture database)
         await using var db = database.CreateContext();
         db.BlobChunks.Add(new() { ProjectId = project, BlobId = Guid.NewGuid(), Index = 0, Ciphertext = new byte[16] });
         await db.SaveChangesAsync(ct);
+        await db.Projects.Where(value => value.Id == project).ExecuteUpdateAsync(set => set.SetProperty(value => value.BlobBytesStored, 16L), ct);
         await new ProjectAccess(db, database.DeliveryGate).DeleteAsync(user.Id, project, ct);
         Assert.False(await db.BlobChunks.AnyAsync(value => value.ProjectId == project, ct));
+        Assert.Equal(0, await db.Projects.Where(value => value.Id == project).Select(value => value.BlobBytesStored).SingleAsync(ct));
     }
 
     private static Task UploadAsync(HubConnection hub, Guid project, Guid blob, BlobChunk chunk, CancellationToken ct) =>

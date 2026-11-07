@@ -128,7 +128,9 @@ public sealed class SyncDbContext : DbContext
         modelBuilder.Entity<Project>(project =>
         {
             project.Property(p => p.Id).ValueGeneratedNever();
+            project.Property(p => p.BlobBytesStored).HasDefaultValue(0L);
             project.ToTable(table => table.HasCheckConstraint("ck_projects_history_starts_at", "history_starts_at >= 1"));
+            project.ToTable(table => table.HasCheckConstraint("ck_projects_blob_bytes_stored", "blob_bytes_stored >= 0"));
         });
         modelBuilder.Entity<ProjectHistoryBoundary>(entry =>
         {
