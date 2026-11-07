@@ -18,8 +18,8 @@ Only these addresses may supply `X-Forwarded-For` and `X-Forwarded-Proto`; the p
 must send both and overwrite client-supplied values. Forwarding is off unless
 configured, and the server trusts at most one hop. The forwarded client address is
 the one every per-address limit below uses. `Relay__KnownProxies__*` still works as
-a deprecated alias when `Transport__KnownProxies__*` is empty. Invalid addresses
-prevent startup.
+a deprecated alias when `Transport__KnownProxies__*` is empty. Invalid addresses in
+whichever list is in effect prevent startup.
 
 ## Access token lifetime
 
@@ -43,10 +43,13 @@ of the per-minute value (rounded up).
 | `RequestsPerMinutePerIp` | 120 | Requests per client address |
 | `RequestsPerMinutePerAccount` | 120 | Requests per authenticated account |
 
-Counted: every HTTP endpoint, hub negotiation, and the request that opens a hub
-connection. Not counted: requests that carry the connection token of an already
-admitted hub connection (long-polling and server-sent-event traffic), which the
-connection and call limits below cover, and `/relay/v1`, which has its own quotas.
+Counted: every HTTP endpoint and hub negotiation, which every new hub connection
+needs. Requests that carry a hub connection token (`/sync?id=...`: the WebSocket
+connect request and long-polling or server-sent-event traffic) are free while the
+hub accepts the token; the connection and call limits below cover them. A request
+whose token the hub rejects (any 4xx response) is charged afterwards, and once the
+caller has no allowance left such requests get 429 up front, so made-up tokens
+cannot bypass the limits. `/relay/v1` has its own quotas.
 
 ## Hub connections and calls
 
@@ -57,6 +60,8 @@ connection and call limits below cover, and `/relay/v1`, which has its own quota
 | `MaxConnectionsPerAccount` | 16 | Open hub connections per account |
 | `HubCallBurst` | 200 | Hub calls one connection can make at once |
 | `HubCallsPerSecond` | 20 | Sustained hub calls per connection |
+
+`HubCallBurst` must be at least `HubCallsPerSecond`, otherwise startup fails.
 
 A connection over a cap is closed right after the handshake with
 `Too many open connections. Close another connection and retry.` Closing a
