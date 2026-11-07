@@ -27,6 +27,9 @@ devenv.local.nix
 .direnv/
 .pre-commit-config.yaml
 
+# Production deployment secrets
+deploy/.env
+
 # Codegraph index
 .codegraph/
 

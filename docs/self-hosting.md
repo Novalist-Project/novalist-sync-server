@@ -37,6 +37,19 @@ export IMAGE="ghcr.io/qf0xb/novalist-sync-server:$VERSION"
 docker pull "$IMAGE"
 ```
 
+## Complete production stack with Compose
+
+For authenticated desktop relay hosting, use
+[the production Compose deployment](../deploy/README.md). It includes Caddy with
+automatic HTTPS, Keycloak with preconfigured native and introspection clients,
+PostgreSQL for the identity provider, health checks and persistent volumes.
+Configure two public hostnames, a published Novalist image version and private
+credentials in `deploy/.env`, then follow the deployment guide.
+
+This stack uses relay mode; PostgreSQL stores identity data, not project updates.
+The separate persistent protocol remains covered below. Compose is for production
+self-hosting; local development continues to use `devenv`.
+
 ## Quick start: relay without accounts, direct TLS
 
 Requirements: Docker Engine, a DNS hostname pointing at this machine, an open

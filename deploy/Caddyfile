@@ -1,0 +1,11 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$SYNC_DOMAIN} {
+	reverse_proxy server:8080
+}
+
+{$OIDC_DOMAIN} {
+	reverse_proxy keycloak:8080
+}

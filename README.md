@@ -5,6 +5,7 @@ packets or stores encrypted updates; project content and encryption keys stay
 with clients.
 
 - [Self-hosting and Docker images](docs/self-hosting.md)
+- [Production Compose stack](deploy/README.md) — HTTPS, OIDC and PostgreSQL
 - [Live relay mode](docs/relay.md) — used by the current desktop integration
 - [Persistent protocol design](docs/design.md)
 - [TLS, proxies and limits](docs/transport.md)
