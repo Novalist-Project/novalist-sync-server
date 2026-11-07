@@ -40,7 +40,10 @@ namespace Novalist.Sync.Server.Migrations
                 column: "project_id",
                 filter: "collectable_at IS NOT NULL");
 
+            // Block chunk inserts from a still-running older server until the migration commits, so no
+            // chunk can arrive between the backfill and the foreign key validation below.
             migrationBuilder.Sql("""
+                LOCK TABLE blob_chunks IN SHARE ROW EXCLUSIVE MODE;
                 INSERT INTO blobs (project_id, blob_id, bytes_stored)
                 SELECT project_id, blob_id, SUM(octet_length(ciphertext))
                 FROM blob_chunks GROUP BY project_id, blob_id;
