@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 
 namespace Novalist.Sync.Server.Transport;
 
@@ -13,19 +14,25 @@ public static class TransportSecurity
             .ValidateDataAnnotations()
             .Validate(options => proxies.Values.All(proxy => IPAddress.TryParse(proxy, out IPAddress? _)),
                 $"{proxies.Key} must contain IP addresses.")
+            .Validate(options => options.KnownNetworks.All(network => System.Net.IPNetwork.TryParse(network, out _)),
+                "Transport:KnownNetworks must contain CIDR networks.")
             .Validate(options => options.HubCallBurst >= options.HubCallsPerSecond,
                 "Transport:HubCallBurst must be at least Transport:HubCallsPerSecond.")
             .ValidateOnStart();
-        services.Configure<ForwardedHeadersOptions>(options =>
+        services.AddOptions<ForwardedHeadersOptions>().Configure<IOptions<TransportOptions>>((options, transport) =>
         {
             if (proxies.Values.Length == 0) return;
+            var settings = transport.Value;
             options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-            options.RequireHeaderSymmetry = true;
-            options.ForwardLimit = 1;
+            // Behind two hops only the edge proxy knows the scheme, so one X-Forwarded-Proto entry is expected.
+            options.RequireHeaderSymmetry = settings.ForwardLimit == 1;
+            options.ForwardLimit = settings.ForwardLimit;
             options.KnownProxies.Clear();
             options.KnownIPNetworks.Clear();
             foreach (var proxy in proxies.Values)
                 if (IPAddress.TryParse(proxy, out var address)) options.KnownProxies.Add(address);
+            foreach (var network in settings.KnownNetworks)
+                if (System.Net.IPNetwork.TryParse(network, out var range)) options.KnownIPNetworks.Add(range);
         });
         services.AddSingleton<TransportRequestLimiter>();
         services.AddRateLimiter(_ => { });

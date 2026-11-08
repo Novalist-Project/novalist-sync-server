@@ -172,6 +172,9 @@ public sealed class TransportSecurityTests(DatabaseFixture database)
     [InlineData("Relay:KnownProxies:0", "proxy.example")]
     [InlineData("Transport:MaxConnectionsPerAccount", "0")]
     [InlineData("Transport:HubCallsPerSecond", "0")]
+    [InlineData("Transport:ForwardLimit", "0")]
+    [InlineData("Transport:ForwardLimit", "3")]
+    [InlineData("Transport:KnownNetworks:0", "not-a-network")]
     public async Task InvalidTransportSettingsPreventStartup(string setting, string value)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Production" });
