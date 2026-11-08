@@ -124,7 +124,9 @@ For a containerized proxy, replace the direct-TLS `docker run` command with the
 following shared-network setup. Replace `nginx-proxy` with your existing proxy
 container's name. Choose an unused subnet; if you change the proxy IP, change
 `Transport__KnownProxies__0` to match. Preserve this network attachment and fixed
-IP in the proxy's deployment configuration when recreating it.
+IP in the proxy's deployment configuration when recreating it. The app uses the
+fixed address `172.30.50.3`; reserve and reuse it when recreating the app too.
+If you change the subnet, keep both fixed addresses inside it and distinct.
 
 If you already started the direct-TLS container, run `docker stop novalist-sync`
 and `docker rm novalist-sync` first. This ends its active relay sessions and frees
@@ -136,7 +138,7 @@ docker network create --subnet 172.30.50.0/24 novalist-proxy
 docker network connect --ip 172.30.50.2 novalist-proxy nginx-proxy
 
 docker run -d --name novalist-sync --restart unless-stopped \
-  --network novalist-proxy \
+  --network novalist-proxy --ip 172.30.50.3 \
   --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --cap-drop ALL --security-opt no-new-privileges=true \
   --env-file /absolute/path/relay.env \
@@ -147,6 +149,8 @@ docker run -d --name novalist-sync --restart unless-stopped \
 Use the environment file with the direct-TLS settings removed as described above.
 Docker resolves `novalist-sync` for the proxy because both containers share this
 user-defined network. The proxy reaches the app on port 8080 without a `-p` mapping.
+The app's fixed address also keeps nginx's startup DNS lookup valid across app
+recreation; preserve that address or reload nginx after an address change.
 
 The proxy must overwrite both forwarded headers and support long-lived WebSockets.
 For an nginx proxy on the same private network, use this inside its HTTPS server
@@ -229,8 +233,29 @@ the desktop's public HTTPS endpoint. It binds device signatures to this server;
 changing it requires clients to select the new endpoint.
 
 Apply migrations **before** starting the server. Startup does not migrate the
-database, and the runtime image contains neither the SDK nor `dotnet-ef`. From a
-source checkout at the same release tag, use the repository's development shell:
+database, and the runtime image contains neither the SDK nor `dotnet-ef`. For a
+complete stack, the [persistent Compose example](../deploy/README.md#example-2-persistent-server)
+runs its `migrate` service and waits for success before starting the server.
+
+For a standalone container deployment, save the persistent-mode settings above
+in a private `persistent.env` file, including `ConnectionStrings__Default` for the
+database being upgraded. Stop the old server, then run the matching release bundle:
+
+```bash
+docker run --rm \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --cap-drop ALL --security-opt no-new-privileges=true \
+  --env-file /absolute/path/persistent.env \
+  "ghcr.io/qf0xb/novalist-sync-server-migrations:$VERSION"
+```
+
+The database hostname must be reachable from this container. Add the appropriate
+Docker network if the database is private to another container network. Mount any
+private database CA at the path configured in the connection string, just as for
+the server. Start the new server only after the bundle exits with code 0.
+
+Alternatively, from a source checkout at the same release tag, use the
+repository's development shell:
 
 ```bash
 git checkout "v$VERSION"
