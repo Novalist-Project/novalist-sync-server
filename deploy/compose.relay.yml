@@ -1,0 +1,42 @@
+name: novalist
+
+services:
+  proxy:
+    extends:
+      file: compose.common.yml
+      service: proxy
+  server:
+    extends:
+      file: compose.common.yml
+      service: server
+    environment:
+      Relay__Enabled: "true"
+      Relay__RequireAuthentication: "true"
+      Relay__Introspection__Endpoint: https://${OIDC_DOMAIN:?Set OIDC_DOMAIN}/realms/novalist/protocol/openid-connect/token/introspect
+      Relay__Introspection__ClientId: novalist-relay
+      Relay__Introspection__ClientSecret: ${RELAY_CLIENT_SECRET:?Set RELAY_CLIENT_SECRET}
+  keycloak:
+    extends:
+      file: compose.common.yml
+      service: keycloak
+    environment:
+      RELAY_CLIENT_SECRET: ${RELAY_CLIENT_SECRET:?Set RELAY_CLIENT_SECRET}
+    volumes:
+      - ./keycloak/novalist-realm.json:/opt/keycloak/data/import/novalist-realm.json:ro
+  postgres:
+    extends:
+      file: compose.common.yml
+      service: postgres
+
+networks:
+  frontend:
+    ipam:
+      config:
+        - subnet: ${FRONTEND_SUBNET:?Set FRONTEND_SUBNET to an unused IPv4 subnet}
+  database:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:

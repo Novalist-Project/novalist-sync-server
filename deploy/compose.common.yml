@@ -1,0 +1,106 @@
+services:
+  proxy:
+    image: ${CADDY_IMAGE:?Set CADDY_IMAGE to a pinned release}
+    restart: unless-stopped
+    environment:
+      SYNC_DOMAIN: ${SYNC_DOMAIN:?Set SYNC_DOMAIN}
+      OIDC_DOMAIN: ${OIDC_DOMAIN:?Set OIDC_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      frontend:
+        ipv4_address: ${PROXY_IP:?Set PROXY_IP within FRONTEND_SUBNET}
+        aliases:
+          - ${OIDC_DOMAIN:?Set OIDC_DOMAIN}
+    security_opt:
+      - no-new-privileges:true
+
+  server:
+    image: ghcr.io/qf0xb/novalist-sync-server:${NOVALIST_VERSION:?Set NOVALIST_VERSION to a published release}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_HTTP_PORTS: "8080"
+      AllowedHosts: ${SYNC_DOMAIN:?Set SYNC_DOMAIN}
+      Transport__KnownProxies__0: ${PROXY_IP:?Set PROXY_IP}
+      Authentication__Schemes__Bearer__Authority: https://${OIDC_DOMAIN:?Set OIDC_DOMAIN}/realms/novalist
+      Authentication__Schemes__Bearer__ValidAudiences__0: novalist-sync
+      Authentication__NativeClient__ClientId: novalist-desktop
+      Authentication__NativeClient__Scope: openid profile offline_access
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      - frontend
+
+  keycloak:
+    image: ${KEYCLOAK_IMAGE:?Set KEYCLOAK_IMAGE to a pinned release}
+    command: [start, --import-realm]
+    restart: unless-stopped
+    mem_limit: 2g
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      KC_HOSTNAME: https://${OIDC_DOMAIN:?Set OIDC_DOMAIN}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_PROXY_TRUSTED_ADDRESSES: ${PROXY_IP:?Set PROXY_IP}
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:?Set KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - /bin/bash
+        - -ec
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000;
+          printf 'GET /health/ready HTTP/1.0\r\n\r\n' >&3;
+          IFS= read -r status <&3;
+          [[ "$$status" == *'200 OK'* ]]
+      interval: 10s
+      timeout: 5s
+      start_period: 120s
+      retries: 12
+    networks:
+      - frontend
+      - database
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE to a pinned PostgreSQL 17 release}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U keycloak -d keycloak']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - database
+    security_opt:
+      - no-new-privileges:true

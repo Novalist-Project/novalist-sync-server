@@ -1,0 +1,16 @@
+**
+!global.json
+!Directory.Build.props
+!Directory.Packages.props
+!src/
+!src/**
+src/**/bin/
+src/**/obj/
+src/**/.aislop/
+src/**/appsettings.Development.json
+src/**/Properties/
+**/.env
+**/.env.*
+**/*.pfx
+**/*.pem
+**/*.key

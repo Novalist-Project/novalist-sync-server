@@ -28,6 +28,7 @@ src/
 tests/
   Novalist.Sync.Server.Tests/
   Novalist.Sync.Contracts.Tests/
+deploy/                      Production Compose examples for relay and persistent hosting
 docs/
   design.md
   transport.md
@@ -41,8 +42,12 @@ file.
 The dev environment is managed with **[devenv](https://devenv.sh)**
 (`devenv.nix` at the repo root). It provides the .NET 10 SDK, `dotnet-ef` and
 the local PostgreSQL service. Do not install SDKs or databases globally, and do
-not add Docker Compose files; if a tool or service is missing, add it to
-`devenv.nix`.
+not add Docker Compose files for development or test services; if a tool or
+service is missing, add it to `devenv.nix`.
+
+Production self-hosting examples belong in `deploy/`; see `deploy/README.md`
+when changing their Compose files, proxy configuration or OIDC setup. Validate
+deployment changes with Docker without replacing the devenv development services.
 
 Run all commands inside the devenv shell (`devenv shell`, or automatically via
 direnv if configured).
