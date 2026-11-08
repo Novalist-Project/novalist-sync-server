@@ -11,6 +11,13 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - target: runtime
+            suffix: ""
+          - target: migrations
+            suffix: -migrations
     permissions:
       contents: read
       packages: write
@@ -47,12 +54,13 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
+          target: ${{ matrix.target }}
           push: true
-          tags: ${{ steps.release.outputs.image }}:${{ steps.release.outputs.version }}
+          tags: ${{ steps.release.outputs.image }}${{ matrix.suffix }}:${{ steps.release.outputs.version }}
           build-args: |
             VERSION=${{ steps.release.outputs.version }}
             REVISION=${{ steps.release.outputs.revision }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,scope=${{ matrix.target }},mode=max
           provenance: true
           sbom: true

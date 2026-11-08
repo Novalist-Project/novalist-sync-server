@@ -25,6 +25,11 @@ There are no `latest`, branch, major-only or minor-only image tags. A branch pus
 or an unpublished tag does not publish an image. Never move a published release
 tag; release a new patch instead. Pin an image digest for immutable deployments.
 
+The same release also publishes
+`ghcr.io/qf0xb/novalist-sync-server-migrations:MAJOR.MINOR.PATCH` for persistent-mode
+schema upgrades. Use matching server and migration versions. Both GHCR packages
+need public visibility for unauthenticated pulls, or registry authentication.
+
 The release workflow must finish before the image exists. On first publication,
 the repository owner must make the GHCR package public for unauthenticated pulls,
 or operators must authenticate with a token that can read the package.
@@ -39,16 +44,17 @@ docker pull "$IMAGE"
 
 ## Complete production stack with Compose
 
-For authenticated desktop relay hosting, use
-[the production Compose deployment](../deploy/README.md). It includes Caddy with
-automatic HTTPS, Keycloak with preconfigured native and introspection clients,
-PostgreSQL for the identity provider, health checks and persistent volumes.
+Choose [the relay or persistent Compose example](../deploy/README.md). Both include
+Caddy with automatic HTTPS, Keycloak with a preconfigured native client, PostgreSQL
+for the identity provider, health checks and persistent volumes. Relay adds token
+introspection. Persistent mode adds its own project database, a release-matched
+migration job, and a password-plus-OTP enrollment flow.
 Configure two public hostnames, a published Novalist image version and private
 credentials in `deploy/.env`, then follow the deployment guide.
 
-This stack uses relay mode; PostgreSQL stores identity data, not project updates.
-The separate persistent protocol remains covered below. Compose is for production
-self-hosting; local development continues to use `devenv`.
+Use `deploy/compose.relay.yml` for the current desktop integration, or
+`deploy/compose.persistent.yml` for persistent-protocol clients. Compose is for
+production self-hosting; local development continues to use `devenv`.
 
 ## Quick start: relay without accounts, direct TLS
 
@@ -293,6 +299,12 @@ docker build --pull \
   --build-arg VERSION="$VERSION" \
   --build-arg REVISION="$(git rev-parse HEAD)" \
   -t "novalist-sync-server:$VERSION" .
+
+# For persistent mode, also build the matching migration image:
+docker build --pull --target migrations \
+  --build-arg VERSION="$VERSION" \
+  --build-arg REVISION="$(git rev-parse HEAD)" \
+  -t "novalist-sync-server-migrations:$VERSION" .
 ```
 
 The multi-stage build uses the .NET 10 SDK and ships only published app files in

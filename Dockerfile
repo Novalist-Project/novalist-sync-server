@@ -14,6 +14,14 @@ RUN test -n "$VERSION" && test -n "$REVISION" \
        --configuration Release --no-restore --output /publish \
        -p:UseAppHost=false -p:Version="$VERSION" -p:SourceRevisionId="$REVISION"
 
+FROM build AS migration-build
+RUN dotnet tool install dotnet-ef --tool-path /tools --version 10.0.13
+RUN ASPNETCORE_ENVIRONMENT=Production DOTNET_ENVIRONMENT=Production \
+    ConnectionStrings__Default=Host=localhost \
+    /tools/dotnet-ef migrations bundle \
+    --project src/Novalist.Sync.Server/Novalist.Sync.Server.csproj \
+    --configuration Release --no-build --output /migration/efbundle
+
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 ARG VERSION
@@ -29,3 +37,10 @@ ENV ASPNETCORE_ENVIRONMENT=Production \
 EXPOSE 8080
 USER $APP_UID
 ENTRYPOINT ["dotnet", "Novalist.Sync.Server.dll"]
+
+FROM runtime AS migrations
+COPY --from=migration-build /migration/efbundle ./efbundle
+ENV DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/novalist-migrations
+ENTRYPOINT ["/app/efbundle"]
+
+FROM runtime AS final

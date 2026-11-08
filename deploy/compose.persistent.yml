@@ -1,0 +1,83 @@
+name: novalist-persistent
+
+services:
+  proxy:
+    extends:
+      file: compose.common.yml
+      service: proxy
+  server:
+    extends:
+      file: compose.common.yml
+      service: server
+    environment:
+      Relay__Enabled: "false"
+      Collaboration__ServerUrl: https://${SYNC_DOMAIN:?Set SYNC_DOMAIN}/
+      ConnectionStrings__Default: Host=sync-db;Database=novalist_sync;Username=novalist;Password=${SYNC_DB_PASSWORD:?Set SYNC_DB_PASSWORD};SSL Mode=Disable
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - sync_database
+  migrate:
+    image: ghcr.io/qf0xb/novalist-sync-server-migrations:${NOVALIST_VERSION:?Set NOVALIST_VERSION to a published release}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__Default: Host=sync-db;Database=novalist_sync;Username=novalist;Password=${SYNC_DB_PASSWORD:?Set SYNC_DB_PASSWORD};SSL Mode=Disable
+    depends_on:
+      sync-db:
+        condition: service_healthy
+    networks:
+      - sync_database
+  sync-db:
+    image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE to a pinned PostgreSQL 17 release}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: novalist_sync
+      POSTGRES_USER: novalist
+      POSTGRES_PASSWORD: ${SYNC_DB_PASSWORD:?Set SYNC_DB_PASSWORD}
+    volumes:
+      - sync_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U novalist -d novalist_sync']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - sync_database
+    security_opt:
+      - no-new-privileges:true
+  keycloak:
+    extends:
+      file: compose.common.yml
+      service: keycloak
+    volumes:
+      - ./keycloak/novalist-persistent-realm.json:/opt/keycloak/data/import/novalist-realm.json:ro
+  postgres:
+    extends:
+      file: compose.common.yml
+      service: postgres
+
+networks:
+  frontend:
+    ipam:
+      config:
+        - subnet: ${FRONTEND_SUBNET:?Set FRONTEND_SUBNET to an unused IPv4 subnet}
+  database:
+    internal: true
+  sync_database:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  sync_data:

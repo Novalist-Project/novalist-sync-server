@@ -1,5 +1,3 @@
-name: novalist
-
 services:
   proxy:
     image: ${CADDY_IMAGE:?Set CADDY_IMAGE to a pinned release}
@@ -37,16 +35,11 @@ services:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_HTTP_PORTS: "8080"
       AllowedHosts: ${SYNC_DOMAIN:?Set SYNC_DOMAIN}
-      Relay__Enabled: "true"
-      Relay__RequireAuthentication: "true"
       Transport__KnownProxies__0: ${PROXY_IP:?Set PROXY_IP}
       Authentication__Schemes__Bearer__Authority: https://${OIDC_DOMAIN:?Set OIDC_DOMAIN}/realms/novalist
       Authentication__Schemes__Bearer__ValidAudiences__0: novalist-sync
       Authentication__NativeClient__ClientId: novalist-desktop
       Authentication__NativeClient__Scope: openid profile offline_access
-      Relay__Introspection__Endpoint: https://${OIDC_DOMAIN:?Set OIDC_DOMAIN}/realms/novalist/protocol/openid-connect/token/introspect
-      Relay__Introspection__ClientId: novalist-relay
-      Relay__Introspection__ClientSecret: ${RELAY_CLIENT_SECRET:?Set RELAY_CLIENT_SECRET}
     depends_on:
       keycloak:
         condition: service_healthy
@@ -70,9 +63,6 @@ services:
       KC_HEALTH_ENABLED: "true"
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:?Set KEYCLOAK_ADMIN}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD}
-      RELAY_CLIENT_SECRET: ${RELAY_CLIENT_SECRET:?Set RELAY_CLIENT_SECRET}
-    volumes:
-      - ./keycloak/novalist-realm.json:/opt/keycloak/data/import/novalist-realm.json:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -114,16 +104,3 @@ services:
       - database
     security_opt:
       - no-new-privileges:true
-
-networks:
-  frontend:
-    ipam:
-      config:
-        - subnet: ${FRONTEND_SUBNET:?Set FRONTEND_SUBNET to an unused IPv4 subnet}
-  database:
-    internal: true
-
-volumes:
-  caddy_data:
-  caddy_config:
-  postgres_data:
