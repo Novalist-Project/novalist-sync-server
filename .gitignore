@@ -29,6 +29,7 @@ devenv.local.nix
 
 # Production deployment secrets
 deploy/.env
+deploy/relay.env
 
 # Codegraph index
 .codegraph/

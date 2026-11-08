@@ -1,0 +1,124 @@
+name: novalist
+
+services:
+  server:
+    image: ghcr.io/qf0xb/novalist-sync-server:${NOVALIST_VERSION:?Set NOVALIST_VERSION}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_HTTP_PORTS: "8080"
+      AllowedHosts: ${SYNC_DOMAIN:?Set SYNC_DOMAIN}
+      Relay__Enabled: "true"
+      Relay__RequireAuthentication: "true"
+      Transport__KnownProxies__0: ${TRAEFIK_IP:?Set TRAEFIK_IP to the existing proxy address}
+      Authentication__Schemes__Bearer__Authority: https://${OIDC_DOMAIN:?Set OIDC_DOMAIN}/realms/novalist
+      Authentication__Schemes__Bearer__ValidAudiences__0: novalist-sync
+      Authentication__NativeClient__ClientId: novalist-desktop
+      Authentication__NativeClient__Scope: openid profile offline_access
+      Relay__Introspection__Endpoint: https://${OIDC_DOMAIN:?Set OIDC_DOMAIN}/realms/novalist/protocol/openid-connect/token/introspect
+      Relay__Introspection__ClientId: novalist-relay
+      Relay__Introspection__ClientSecret: ${RELAY_CLIENT_SECRET:?Set RELAY_CLIENT_SECRET}
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:?Set TRAEFIK_NETWORK}
+      traefik.http.routers.novalist-relay.rule: Host(`${SYNC_DOMAIN:?Set SYNC_DOMAIN}`)
+      traefik.http.routers.novalist-relay.entrypoints: ${TRAEFIK_HTTPS_ENTRYPOINT:?Set TRAEFIK_HTTPS_ENTRYPOINT}
+      traefik.http.routers.novalist-relay.tls: "true"
+      traefik.http.routers.novalist-relay.tls.certresolver: ${TRAEFIK_CERT_RESOLVER:-}
+      traefik.http.routers.novalist-relay.service: novalist-relay
+      traefik.http.routers.novalist-relay.middlewares: novalist-relay-https
+      traefik.http.middlewares.novalist-relay-https.headers.customrequestheaders.X-Forwarded-Proto: https
+      traefik.http.services.novalist-relay.loadbalancer.server.port: "8080"
+    networks:
+      - proxy
+
+  keycloak:
+    image: ${KEYCLOAK_IMAGE:?Set KEYCLOAK_IMAGE to a pinned release}
+    command: [start, --import-realm]
+    restart: unless-stopped
+    mem_limit: 2g
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      KC_HOSTNAME: https://${OIDC_DOMAIN:?Set OIDC_DOMAIN}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_PROXY_TRUSTED_ADDRESSES: ${TRAEFIK_IP:?Set TRAEFIK_IP}
+      KC_HEALTH_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:?Set KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD}
+      RELAY_CLIENT_SECRET: ${RELAY_CLIENT_SECRET:?Set RELAY_CLIENT_SECRET}
+    volumes:
+      - ./keycloak/novalist-realm.json:/opt/keycloak/data/import/novalist-realm.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - /bin/bash
+        - -ec
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000;
+          printf 'GET /health/ready HTTP/1.0\r\n\r\n' >&3;
+          IFS= read -r status <&3;
+          [[ "$$status" == *'200 OK'* ]]
+      interval: 10s
+      timeout: 5s
+      start_period: 120s
+      retries: 12
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:?Set TRAEFIK_NETWORK}
+      traefik.http.routers.novalist-relay-auth.rule: Host(`${OIDC_DOMAIN:?Set OIDC_DOMAIN}`)
+      traefik.http.routers.novalist-relay-auth.entrypoints: ${TRAEFIK_HTTPS_ENTRYPOINT:?Set TRAEFIK_HTTPS_ENTRYPOINT}
+      traefik.http.routers.novalist-relay-auth.tls: "true"
+      traefik.http.routers.novalist-relay-auth.tls.certresolver: ${TRAEFIK_CERT_RESOLVER:-}
+      traefik.http.routers.novalist-relay-auth.service: novalist-relay-auth
+      traefik.http.services.novalist-relay-auth.loadbalancer.server.port: "8080"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - proxy
+      - database
+
+  postgres:
+    image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE to a pinned PostgreSQL 17 release}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U keycloak -d keycloak']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - database
+
+networks:
+  proxy:
+    external: true
+    name: ${TRAEFIK_NETWORK:?Set TRAEFIK_NETWORK to an existing Docker network}
+  database:
+    internal: true
+
+volumes:
+  postgres_data:
