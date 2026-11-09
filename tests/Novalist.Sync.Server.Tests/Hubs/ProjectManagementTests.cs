@@ -191,8 +191,7 @@ public sealed class ProjectManagementTests(DatabaseFixture database)
         {
             await using var stream = owner.Hub.StreamAsync<SequencedEnvelope>("CatchUp", project, stale, ct).GetAsyncEnumerator(ct);
             var error = await Assert.ThrowsAsync<HubException>(async () => await stream.MoveNextAsync());
-            Assert.Contains("history before update 4 was replaced by a checkpoint", error.Message, StringComparison.Ordinal);
-            Assert.Contains("Refresh the project keys to continue", error.Message, StringComparison.Ordinal);
+            Assert.Contains(Protocol.HistoryReplaced + " It now starts at update 4.", error.Message, StringComparison.Ordinal);
         }
 
         var caughtUp = await owner.Hub.StreamAsync<SequencedEnvelope>("CatchUp", project, 3L, ct).ToListAsync(ct);

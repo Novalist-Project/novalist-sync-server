@@ -14,8 +14,7 @@ public sealed partial class UpdateLog
             .Select(project => (long?)project.HistoryStartsAt).SingleOrDefaultAsync(cancellationToken)
             ?? throw new AccessDeniedException("The shared project is unavailable.");
         if (afterServerSeq < historyStartsAt - 1)
-            throw new ConflictException(
-                $"This project's history before update {historyStartsAt} was replaced by a checkpoint. Refresh the project keys to continue.");
+            throw new ConflictException($"{Protocol.HistoryReplaced} It now starts at update {historyStartsAt}.");
     }
 
     public async IAsyncEnumerable<SequencedEnvelope> ReadAfterAsync(

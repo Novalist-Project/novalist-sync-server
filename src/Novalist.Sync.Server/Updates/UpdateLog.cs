@@ -44,7 +44,7 @@ public sealed partial class UpdateLog(SyncDbContext db)
         var now = await db.Database.SqlQuery<DateTimeOffset>($"SELECT clock_timestamp() AS \"Value\"").SingleAsync(cancellationToken);
         if (stages.Any(stage => stage.Id != committingStage && stage.LastActivityAt > now - ProjectEpochAccess.ReservationLifetime &&
             stage.CreatedAt > now - ProjectEpochAccess.ReservationMaxLifetime))
-            throw new PushRejectedException("Project key rotation is in progress. Retry after the rotation finishes.");
+            throw new PushRejectedException(Protocol.TransitionInProgress);
 
         var owner = (int)MembershipRole.Owner;
         var contributor = (int)MembershipRole.Contributor;
