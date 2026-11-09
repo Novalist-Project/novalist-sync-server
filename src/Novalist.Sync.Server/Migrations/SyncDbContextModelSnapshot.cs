@@ -370,6 +370,10 @@ namespace Novalist.Sync.Server.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<bool>("Compaction")
+                        .HasColumnType("boolean")
+                        .HasColumnName("compaction");
+
                     b.Property<long>("Count")
                         .HasColumnType("bigint")
                         .HasColumnName("count");
@@ -424,6 +428,10 @@ namespace Novalist.Sync.Server.Migrations
                     b.Property<long>("FirstServerSeq")
                         .HasColumnType("bigint")
                         .HasColumnName("first_server_seq");
+
+                    b.Property<long?>("CheckpointBytes")
+                        .HasColumnType("bigint")
+                        .HasColumnName("checkpoint_bytes");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")

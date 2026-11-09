@@ -98,7 +98,7 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
         await transaction.CommitAsync(ct);
     }
 
-    public async Task<long> StageAsync(Guid user, Guid device, Guid rotation, Envelope envelope, CancellationToken ct)
+    public async Task<long> StageAsync(Guid user, Guid device, Guid rotation, Envelope envelope, CancellationToken ct, bool compaction = false)
     {
         var header = EnvelopeHeader.Parse(envelope.Header);
         if (header.MsgType != MsgType.Update || header.SenderDeviceId != device || header.SenderSeq > long.MaxValue ||
@@ -107,8 +107,10 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
         await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
         await EnsureDeviceAsync(user, device, ct);
         var stage = await LockStageForUploadAsync(rotation, device, ct);
-        await projects.EnsureIsOwnerAsync(user, stage.ProjectId, ct);
-        if (header.ProjectId != stage.ProjectId || header.Epoch != stage.PreviousEpoch + 1)
+        if (stage.Compaction != compaction) throw new ConflictException("The checkpoint belongs to another transition.");
+        await EnsureStageAuthorityAsync(user, stage, ct);
+        var epoch = compaction ? stage.PreviousEpoch : stage.PreviousEpoch + 1;
+        if (header.ProjectId != stage.ProjectId || header.Epoch != epoch)
             throw new ConflictException("The checkpoint belongs to another transition.");
         var payload = JsonSerializer.SerializeToUtf8Bytes(envelope);
         var existing = await db.ProjectEpochEnvelopes.SingleOrDefaultAsync(value => value.RotationId == rotation && value.SenderSeq == (long)header.SenderSeq, ct);
@@ -134,6 +136,10 @@ public sealed partial class ProjectEpochAccess(SyncDbContext db, ProjectAccess p
             .OrderByDescending(value => value.Epoch).Select(value => new StoredProjectEpochGrant((uint)value.Epoch, value.FirstServerSeq, value.GrantorDeviceId, value.Payload))
             .FirstOrDefaultAsync(ct);
     }
+
+    // Writers may run their own compaction; only the owner may run a rotation.
+    private Task EnsureStageAuthorityAsync(Guid user, ProjectEpochStage stage, CancellationToken ct) =>
+        stage.Compaction ? projects.EnsureCanWriteAsync(user, stage.ProjectId, ct) : projects.EnsureIsOwnerAsync(user, stage.ProjectId, ct);
 
     private async Task<Project> LockProjectAsync(Guid project, CancellationToken ct) =>
         (await db.Projects.FromSqlInterpolated($"SELECT * FROM projects WHERE id = {project} FOR UPDATE").AsNoTracking().ToListAsync(ct)).SingleOrDefault()

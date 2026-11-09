@@ -137,6 +137,8 @@ public sealed class ProjectEpochStage
     public long PreviousEpoch { get; set; }
     public long PreviousServerSeq { get; set; }
     public long Count { get; set; }
+    // A compaction keeps the current epoch and is open to every writer; a rotation advances it and is owner-only.
+    public bool Compaction { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset LastActivityAt { get; set; }
 }
@@ -146,6 +148,8 @@ public sealed class ProjectHistoryBoundary
     public Guid ProjectId { get; set; }
     public long FirstServerSeq { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+    // Stored bytes of the checkpoint that starts this history; null for boundaries recorded before it was tracked.
+    public long? CheckpointBytes { get; set; }
 }
 
 public sealed class ProjectEpochEnvelope

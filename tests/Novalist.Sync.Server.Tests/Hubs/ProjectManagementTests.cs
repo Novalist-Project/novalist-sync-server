@@ -111,6 +111,35 @@ public sealed class ProjectManagementTests(DatabaseFixture database)
     }
 
     [Fact]
+    public async Task AWriterCompactsThroughTheHubAndMembersAreNotified()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        await using var server = new SyncServer(database);
+        await using var owner = await ConnectAsync(server, ct);
+        await using var writer = await ConnectAsync(server, ct);
+        var project = await database.CreateProjectAsync((owner.UserId, MembershipRole.Owner), (writer.UserId, MembershipRole.Contributor));
+        await owner.Hub.InvokeAsync("JoinProject", project, ct);
+        var compacted = new TaskCompletionSource<(Guid Project, long HistoryStartsAt)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var notification = owner.Hub.On<Guid, long>("ProjectHistoryCompacted", (id, start) => compacted.TrySetResult((id, start)));
+        await owner.Hub.InvokeAsync<long>("Push", TestData.Envelope(project, owner.DeviceId, 1), ct);
+
+        var cancelled = Guid.NewGuid();
+        await writer.Hub.InvokeAsync<ProjectEpochStatus>("ReserveProjectCompaction", project, cancelled, ct);
+        await writer.Hub.InvokeAsync("CancelProjectCompaction", cancelled, ct);
+        var compaction = Guid.NewGuid();
+        Assert.Equal(new ProjectEpochStatus(0, 1), await writer.Hub.InvokeAsync<ProjectEpochStatus>("ReserveProjectCompaction", project, compaction, ct));
+        Assert.Equal(1, await writer.Hub.InvokeAsync<long>("StageProjectCompaction", compaction, TestData.Envelope(project, writer.DeviceId, 1), ct));
+        await writer.Hub.InvokeAsync("CommitProjectCompaction", compaction, ct);
+
+        Assert.Equal((project, 2L), await compacted.Task.WaitAsync(TimeSpan.FromSeconds(5), ct));
+        var history = await owner.Hub.InvokeAsync<ProjectHistoryStatus>("GetProjectHistory", project, ct);
+        Assert.Equal((2L, 2L), (history.HistoryStartsAt, history.LastServerSeq));
+        Assert.Equal(history.BytesSinceBoundary, history.CheckpointBytes);
+        Assert.NotNull(history.LastCompactedAt);
+        Assert.Equal(new ProjectEpochStatus(0, 2), await owner.Hub.InvokeAsync<ProjectEpochStatus>("GetProjectEpoch", project, ct));
+    }
+
+    [Fact]
     public async Task OwnerAuthorizesAMembersNewDeviceWhichIsNotifiedAndReadsItsGrant()
     {
         var ct = TestContext.Current.CancellationToken;
@@ -162,8 +191,7 @@ public sealed class ProjectManagementTests(DatabaseFixture database)
         {
             await using var stream = owner.Hub.StreamAsync<SequencedEnvelope>("CatchUp", project, stale, ct).GetAsyncEnumerator(ct);
             var error = await Assert.ThrowsAsync<HubException>(async () => await stream.MoveNextAsync());
-            Assert.Contains("history before update 4 was replaced by a checkpoint", error.Message, StringComparison.Ordinal);
-            Assert.Contains("Refresh the project keys to continue", error.Message, StringComparison.Ordinal);
+            Assert.Contains(Protocol.HistoryReplaced + " It now starts at update 4.", error.Message, StringComparison.Ordinal);
         }
 
         var caughtUp = await owner.Hub.StreamAsync<SequencedEnvelope>("CatchUp", project, 3L, ct).ToListAsync(ct);

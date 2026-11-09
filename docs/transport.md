@@ -16,10 +16,22 @@ Terminate TLS at Kestrel or at one trusted reverse proxy. With a proxy, set
 `Transport__KnownProxies__0` (and further indexed entries) to its exact IP address.
 Only these addresses may supply `X-Forwarded-For` and `X-Forwarded-Proto`; the proxy
 must send both and overwrite client-supplied values. Forwarding is off unless
-configured, and the server trusts at most one hop. The forwarded client address is
-the one every per-address limit below uses. `Relay__KnownProxies__*` still works as
-a deprecated alias when `Transport__KnownProxies__*` is empty. Invalid addresses in
-whichever list is in effect prevent startup.
+configured, and by default the server trusts one hop. The forwarded client address
+is the one every per-address limit below uses. `Relay__KnownProxies__*` still works
+as a deprecated alias when `Transport__KnownProxies__*` is empty. Invalid addresses
+in whichever list is in effect prevent startup.
+
+When a second proxy sits in front of the known one (a CDN edge, or a load balancer
+in front of Traefik), set `Transport__ForwardLimit=2` and list the edge's address
+ranges as CIDR networks in `Transport__KnownNetworks__0` (and further indexed
+entries). The server then walks back at most two `X-Forwarded-For` entries, and
+only through addresses in `KnownProxies` or `KnownNetworks`; it stops at the first
+untrusted address and treats that as the client, so an untrusted hop can neither
+supply an earlier client address nor assert HTTPS. In this mode the edge alone
+reports the scheme, so a single `X-Forwarded-Proto` entry is accepted; plain HTTP
+from the edge is still rejected. `ForwardLimit` accepts 1 or 2, and an invalid
+value or network prevents startup. `KnownNetworks` has no effect unless
+`KnownProxies` is set.
 
 ## Access token lifetime
 

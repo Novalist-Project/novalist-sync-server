@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Novalist.Sync.Server.Data;
 using Novalist.Sync.Contracts;
 
 namespace Novalist.Sync.Server.Access;
@@ -28,16 +29,19 @@ public sealed partial class ProjectEpochAccess
         return new((uint)reserved.PreviousEpoch, reserved.PreviousServerSeq);
     }
 
-    public async Task CancelAsync(Guid user, Guid device, Guid rotation, CancellationToken ct)
+    public async Task CancelAsync(Guid user, Guid device, Guid rotation, CancellationToken ct, bool compaction = false)
     {
         await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
         await EnsureDeviceAsync(user, device, ct);
         var original = await db.ProjectEpochStages.AsNoTracking().Where(stage => stage.Id == rotation)
-            .Select(stage => new { stage.ProjectId, stage.DeviceId, stage.CreatedAt }).SingleOrDefaultAsync(ct);
+            .Select(stage => new { stage.ProjectId, stage.DeviceId, stage.CreatedAt, stage.Compaction }).SingleOrDefaultAsync(ct);
         if (original is null) return;
-        await projects.EnsureIsOwnerAsync(user, original.ProjectId, ct);
+        if (original.Compaction != compaction) throw new ConflictException("The project transition is a different kind of operation.");
+        if (compaction && original.DeviceId != device) throw new ConflictException("Only the device that reserved a compaction can cancel it.");
+        var authority = new ProjectEpochStage { ProjectId = original.ProjectId, Compaction = original.Compaction };
+        await EnsureStageAuthorityAsync(user, authority, ct);
         await LockProjectAsync(original.ProjectId, ct);
-        await projects.EnsureIsOwnerAsync(user, original.ProjectId, ct);
+        await EnsureStageAuthorityAsync(user, authority, ct);
         var deleted = await db.ProjectEpochStages.Where(stage => stage.Id == rotation && stage.ProjectId == original.ProjectId &&
             stage.DeviceId == original.DeviceId && stage.CreatedAt == original.CreatedAt).ExecuteDeleteAsync(ct);
         if (deleted == 0 && await db.ProjectEpochStages.AnyAsync(stage => stage.Id == rotation, ct))

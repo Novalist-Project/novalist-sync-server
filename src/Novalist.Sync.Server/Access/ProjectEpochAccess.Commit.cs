@@ -21,6 +21,7 @@ public sealed partial class ProjectEpochAccess
         await EnsureDeviceAsync(user, device, ct);
         var project = await LockProjectAsync(projectId, ct);
         var stage = await LockStageAsync(request.RotationId, device, ct);
+        if (stage.Compaction) throw new ConflictException("Commit a history compaction with CommitProjectCompaction.");
         if (stage.ProjectId != project.Id) throw new ConflictException("The project transition changed. Refresh and try again.");
         await projects.EnsureIsOwnerAsync(user, project.Id, ct);
         if (request.RemovedMemberId.HasValue &&
@@ -67,10 +68,10 @@ public sealed partial class ProjectEpochAccess
         }
         await db.Invitations.Where(value => value.ProjectId == project.Id).ExecuteUpdateAsync(set => set.SetProperty(value => value.ExpiresAt, DateTimeOffset.UnixEpoch), ct);
         await db.FieldLeases.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
-        var checkpointBytes = await db.ProjectEpochEnvelopes.Where(value => value.RotationId == stage.Id).SumAsync(value => (long)value.Payload.Length, ct);
+        var checkpointBytes = await StoredBytesAsync(project.Id, historyStartsAt, ct);
         await db.ProjectEpochStages.Where(value => value.ProjectId == project.Id).ExecuteDeleteAsync(ct);
         var committedAt = await DatabaseTimeAsync(ct);
-        db.ProjectHistoryBoundaries.Add(new() { ProjectId = project.Id, FirstServerSeq = historyStartsAt, CreatedAt = committedAt });
+        db.ProjectHistoryBoundaries.Add(new() { ProjectId = project.Id, FirstServerSeq = historyStartsAt, CreatedAt = committedAt, CheckpointBytes = checkpointBytes });
         await db.SaveChangesAsync(ct);
         await transaction.CommitAsync(ct);
         log.LogInformation(
@@ -95,7 +96,7 @@ public sealed partial class ProjectEpochAccess
                     await db.UpdateReceipts.AnyAsync(receipt => receipt.ProjectId == stage.ProjectId &&
                         receipt.SenderDeviceId == stage.DeviceId && receipt.SenderSeq == value.SenderSeq, ct))
                     throw new ConflictException("The checkpoint sender sequence was already used.");
-                await new UpdateLog(db).AppendAsync(user, envelope, ct);
+                await new UpdateLog(db).AppendAsync(user, envelope, ct, stage.Id);
             }
         }
     }

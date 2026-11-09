@@ -13,6 +13,16 @@ Both examples reuse `compose.common.yml` for Caddy, OIDC and identity storage.
 They are complete entry points: pass only the chosen example, not the common file,
 to Compose. Development still uses `devenv`.
 
+For a persistent server behind a separately managed, shared Traefik, use the
+[standalone Traefik example](traefik.md) instead. It includes all Novalist services
+without starting a proxy or publishing ports.
+
+The [standalone relay Traefik example](traefik-relay.md) provides the equivalent
+setup for live relay hosting.
+
+Unlike the Caddy examples, both Traefik examples also work behind Cloudflare's
+proxy; see [DNS and Cloudflare](traefik.md#dns-and-cloudflare).
+
 ## Requirements
 
 - Docker Engine with the Compose plugin on a Linux AMD64 or ARM64 host.

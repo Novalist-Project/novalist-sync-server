@@ -61,3 +61,11 @@ the blob would return too few bytes to the project quota. Rolling it back
 drops the table and its marks while keeping every chunk and the project byte
 counters. After the cleanup job has collected blobs, rollback cannot restore
 their chunks.
+
+`HistoryCompaction` adds `project_epoch_stages.compaction` (false for existing
+reservations, so they stay rotations) and the nullable
+`project_history_boundaries.checkpoint_bytes`; existing boundaries keep a null
+size. Inserts from an older server that omit the column still create rotation
+reservations. Rolling it back drops both columns: a compaction reserved at that
+moment would turn into a rotation reservation that cannot commit, and expires
+on its own.

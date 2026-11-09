@@ -1,3 +1,4 @@
+using Novalist.Sync.Contracts;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Novalist.Sync.Server.Access;
@@ -64,7 +65,7 @@ public sealed class EpochReservationConcurrencyTests(DatabaseFixture database)
             else
             {
                 var error = await Assert.ThrowsAsync<PushRejectedException>(() => append);
-                Assert.Contains("rotation is in progress", error.Message, StringComparison.Ordinal);
+                Assert.Equal(Protocol.TransitionInProgress, error.Message);
                 await transaction.RollbackAsync(ct);
             }
             await using var checking = database.CreateContext();

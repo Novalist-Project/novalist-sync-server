@@ -43,7 +43,7 @@ public sealed class EpochCompactionRegressionTests : IAsyncLifetime
         Assert.Equal(130, await Cleanup(writer).PruneAsync(ct));
 
         var error = await Assert.ThrowsAsync<ConflictException>(async () => await stream.MoveNextAsync());
-        Assert.Contains("history before update 131", error.Message, StringComparison.Ordinal);
+        Assert.Contains("It now starts at update 131.", error.Message, StringComparison.Ordinal);
         var restarted = await new UpdateLog(reader).ReadAfterAsync(project, 130, ct).ToListAsync(ct);
         Assert.Equal(131, Assert.Single(restarted).ServerSeq);
     }
@@ -102,8 +102,7 @@ public sealed class EpochCompactionRegressionTests : IAsyncLifetime
 
         Assert.True(rotate.Fired);
         Assert.Equal(Enumerable.Range(1, 128).Select(seq => (long)seq), received);
-        Assert.Contains("history before update 131 was replaced by a checkpoint", error.Message, StringComparison.Ordinal);
-        Assert.Contains("Refresh the project keys to continue", error.Message, StringComparison.Ordinal);
+        Assert.Contains(Protocol.HistoryReplaced + " It now starts at update 131.", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]

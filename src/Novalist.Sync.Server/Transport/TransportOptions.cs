@@ -10,6 +10,12 @@ public sealed class TransportOptions
     // Exact IP addresses of the reverse proxy allowed to send X-Forwarded-For and X-Forwarded-Proto.
     public string[] KnownProxies { get; set; } = [];
 
+    // CIDR ranges of further proxies in front of a known proxy, such as a CDN edge.
+    public string[] KnownNetworks { get; set; } = [];
+
+    // Trusted hops to walk back through X-Forwarded-For. 2 allows an edge proxy in KnownNetworks.
+    [Range(1, 2)] public int ForwardLimit { get; set; } = 1;
+
     [Range(1, 1_000_000)] public int RequestsPerMinute { get; set; } = 4096;
     [Range(1, 65536)] public int RequestsPerMinutePerIp { get; set; } = 120;
     [Range(1, 65536)] public int RequestsPerMinutePerAccount { get; set; } = 120;
