@@ -17,6 +17,12 @@ public interface ISyncHub
     Task CommitProjectEpoch(CommitProjectEpoch request);
     Task<StoredProjectEpochGrant?> GetProjectEpochGrant(Guid projectId, uint afterEpoch);
     Task<StoredProjectEpochGrant?> GetLatestProjectEpochGrant(Guid projectId);
+    // Any writer replaces the history with a checkpoint at the current epoch; keys and grants stay unchanged.
+    Task<ProjectEpochStatus> ReserveProjectCompaction(Guid projectId, Guid compactionId);
+    Task<long> StageProjectCompaction(Guid compactionId, Envelope envelope);
+    Task CommitProjectCompaction(Guid compactionId);
+    Task CancelProjectCompaction(Guid compactionId);
+    Task<ProjectHistoryStatus> GetProjectHistory(Guid projectId);
     Task<IReadOnlyList<PendingProjectDevice>> ListPendingProjectDevices(Guid projectId);
     Task AuthorizeProjectDevice(AuthorizeProjectDevice request);
     Task<IReadOnlyList<ProjectMember>> ListProjectMembers(Guid projectId);

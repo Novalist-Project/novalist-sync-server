@@ -11,6 +11,7 @@ public sealed partial class ProjectEpochAccess
         await using var transaction = await AccountAccessLock.AcquireAsync(db, user, legacyAccount: false, ct, shared: true);
         await EnsureDeviceAsync(user, device, ct);
         var stage = await LockStageForUploadAsync(rotation, device, ct);
+        if (stage.Compaction) throw new ConflictException("A history compaction keeps the current keys and takes no grants.");
         await projects.EnsureIsOwnerAsync(user, stage.ProjectId, ct);
         var existing = await db.ProjectEpochDeviceGrants.FindAsync([rotation, grant.DeviceId], ct);
         if (existing is not null)

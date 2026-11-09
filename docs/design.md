@@ -572,9 +572,23 @@ staging activity and after 30 minutes in total, so large checkpoints can finish
 uploading while pushes stay blocked. Successful identical envelope and grant
 retries also persist activity without extending the 30-minute cap.
 
-Clients are expected to trigger rotations by log size, not by the calendar
-(e.g. when the log since the boundary exceeds four times the checkpoint, at most
-daily, while idle), and to batch editor updates (250 ms) before saving them.
+**Implemented: compaction without a key change.** Rotation is owner-only because
+it signs new device certificates, but replacing history needs no new keys. Any
+writing member can therefore compact: `ReserveProjectCompaction` takes the same
+per-project reservation as a rotation (pushes pause, only one runs at a time),
+`StageProjectCompaction` uploads a checkpoint encrypted at the **current** epoch,
+and `CommitProjectCompaction` copies it into the log right after the reserved
+position `B`, sets `history_starts_at = B + 1` and records a history boundary.
+Keys, grants, invitations and field leases are unchanged, and members receive
+`ProjectHistoryCompacted`. Only the reserving device can stage, commit or cancel
+it. The cleanup job removes the replaced updates after the same grace period.
+
+Each boundary records the stored size of its checkpoint (`checkpoint_bytes`,
+null for boundaries from before it was tracked). `GetProjectHistory` returns the
+boundary, the stored bytes since it (checkpoint included) and the newest
+checkpoint size, so clients compact by log size rather than by the calendar:
+when the log since the boundary exceeds four times the checkpoint, at most
+daily. Clients also batch editor updates (250 ms) before saving them.
 
 **Superseded original plan:** per-item snapshots every 500 updates sealed with
 `K_snapshot`, deletion of updates covered by them, and tiered snapshot retention
