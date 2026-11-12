@@ -21,6 +21,38 @@ have independent Ed25519 signing and X25519 receiving keys.
    registering both devices atomically. Successful registration consumes the
    claim; a validation or database failure releases it for retry before expiry.
 
+## Key-bound enrollment in one sign-in
+
+The challenge flow needs a signed-in client, so a new device signs in twice. When
+`/client-configuration` reports `keyBoundEnrollment: true` (persistent servers
+with `Collaboration__ServerUrl` configured), the client can sign in and enroll
+with one browser login instead:
+
+1. Before signing in, the client creates its ordinary and recovery identities and
+   a random 32-byte salt, and computes the nonce with
+   `DeviceProof.EnrollmentNonce(serverUrl, keys, recoveryKeys, salt)`: unpadded
+   base64url SHA-256 over a fixed domain, the length-prefixed canonical server
+   URL, both public-key records and the salt. The account ID is not known yet, so
+   it is not part of the nonce.
+2. It signs in once with that nonce, `max_age=0`, and essential `amr` and
+   `auth_time` claims, keeping the access token, refresh token and ID token.
+3. It requests `/devices/registration`, signs its registrations for the returned
+   account, and submits `EnrollmentProof { challengeId: empty, identityToken, salt }`
+   to `/devices/verified` with the access token from the same sign-in.
+4. The server recomputes the nonce from the submitted keys and salt, then runs
+   the same ID-token checks as the challenge flow. The ID token's subject must
+   match the access token's, which binds the account. Each nonce is accepted once:
+   a successful registration keeps it as a tombstone for six minutes, past the
+   five-minute MFA window; a rejected attempt releases it. Key-bound claims share
+   the challenge limits.
+
+Substituting either key record changes the nonce, so a captured proof cannot
+enroll other keys. Clients fall back to the challenge flow when the server does
+not advertise key-bound enrollment, or when the device already has identities
+the sign-in nonce was not derived from.
+
+## What the server learns
+
 The server receives public keys, the device association, signatures, and the
 short-lived identity proof. It stores no ID token, refresh token, recovery
 secret, private key, or project key. Challenges are in memory and do not survive

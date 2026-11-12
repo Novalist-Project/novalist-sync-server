@@ -83,10 +83,21 @@ public class StartupTests(DatabaseFixture database)
         Assert.Equal(new NativeClientConfiguration(1, "https://idp.test/realm", "novalist", "openid profile"), configuration);
     }
 
+    [Fact]
+    public async Task DesktopConfiguration_AdvertisesKeyBoundEnrollmentOnceVerifiedDevicesAreConfigured()
+    {
+        await using var server = new ProductionServer(database, "https://idp.test/realm", "novalist-sync", desktop: true,
+            serverUrl: "https://sync.example/");
+        using var client = server.CreateClient();
+        var configuration = await client.GetFromJsonAsync<NativeClientConfiguration>(Protocol.ClientConfigurationPath, TestContext.Current.CancellationToken);
+        Assert.Equal(new NativeClientConfiguration(1, "https://idp.test/realm", "novalist", "openid profile offline_access sync",
+            KeyBoundEnrollment: true), configuration);
+    }
+
     // The real server in the Production environment, configured only through settings,
     // the way an admin would through environment variables.
     private sealed class ProductionServer(DatabaseFixture database, string? authority, string? audience, bool desktop = false,
-        string scope = "openid profile offline_access sync", string clientId = "novalist")
+        string scope = "openid profile offline_access sync", string clientId = "novalist", string? serverUrl = null)
         : HttpsWebApplicationFactory
     {
         protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -94,6 +105,7 @@ public class StartupTests(DatabaseFixture database)
             builder.UseEnvironment("Production");
             builder.UseSetting("Relay:Enabled", "false");
             builder.UseSetting("ConnectionStrings:Default", database.ConnectionString);
+            if (serverUrl is not null) builder.UseSetting("Collaboration:ServerUrl", serverUrl);
             // Omit missing settings: a null indexed entry still creates an audience
             // child, which JWT configuration binds as an empty audience value.
             if (authority is not null)
