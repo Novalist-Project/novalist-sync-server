@@ -10,7 +10,7 @@ public sealed class DeviceEnrollmentChallenges(TimeProvider clock)
     // A key-bound sign-in stays usable while its auth_time is within five minutes (plus 30 seconds of skew).
     private static readonly TimeSpan KeyBoundLifetime = TimeSpan.FromMinutes(6);
     private readonly TimeProvider clock = clock;
-    private sealed record Pending(Guid User, byte[] KeysHash, DeviceEnrollmentChallenge Challenge, bool KeyBound = false)
+    private sealed record Pending(Guid User, byte[] KeysHash, DeviceEnrollmentChallenge Challenge, bool KeyBound = false, bool Reset = false)
     {
         public bool Claimed { get; set; }
     }
@@ -38,9 +38,33 @@ public sealed class DeviceEnrollmentChallenges(TimeProvider clock)
         var hash = Hash(server, user, request.Keys, recovery.Keys);
         lock (gate)
         {
-            if (!pending.TryGetValue(proof.ChallengeId, out var value) || value.KeyBound || value.User != user ||
+            if (!pending.TryGetValue(proof.ChallengeId, out var value) || value.KeyBound || value.Reset || value.User != user ||
                 value.Claimed || value.Challenge.ExpiresAt <= clock.GetUtcNow() || !CryptographicOperations.FixedTimeEquals(hash, value.KeysHash))
                 throw new AccessDeniedException("The enrollment challenge expired or does not match these device keys.");
+            value.Claimed = true;
+            return new EnrollmentClaim(this, value.Challenge);
+        }
+    }
+
+    public DeviceEnrollmentChallenge CreateReset(Guid user)
+    {
+        lock (gate)
+        {
+            Reserve(user);
+            var challenge = new DeviceEnrollmentChallenge(Guid.NewGuid(),
+                "novalist/account-reset/" + Base64UrlEncoder.Encode(RandomNumberGenerator.GetBytes(32)), clock.GetUtcNow().AddMinutes(5));
+            pending.Add(challenge.Id, new(user, [], challenge, Reset: true));
+            return challenge;
+        }
+    }
+
+    public EnrollmentClaim ClaimReset(Guid user, Guid challenge)
+    {
+        lock (gate)
+        {
+            if (!pending.TryGetValue(challenge, out var value) || !value.Reset || value.User != user ||
+                value.Claimed || value.Challenge.ExpiresAt <= clock.GetUtcNow())
+                throw new AccessDeniedException("The identity reset challenge expired or does not match this account.");
             value.Claimed = true;
             return new EnrollmentClaim(this, value.Challenge);
         }

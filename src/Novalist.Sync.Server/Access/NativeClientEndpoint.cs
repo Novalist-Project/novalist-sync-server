@@ -33,6 +33,7 @@ public static class NativeClientEndpoint
 
         return Results.Ok(new NativeClientConfiguration(Protocol.Version, authority, clientId, scope,
             // Only persistent servers register DeviceProofServer; relay servers never enroll devices.
-            KeyBoundEnrollment: services.GetService<DeviceProofServer>()?.ServerUrl is not null));
+            KeyBoundEnrollment: services.GetService<DeviceProofServer>()?.ServerUrl is not null,
+            AccountIdentityReset: services.GetService<DeviceProofServer>()?.ServerUrl is not null));
     }
 }

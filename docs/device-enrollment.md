@@ -84,6 +84,43 @@ Losing every ordinary device does not reopen bearer-only
 enrollment, and a revoked recovery identity cannot authorize a replacement.
 Recovery of project content still requires its encryption keys.
 
+## Lost-device identity reset
+
+Persistent servers with verified-device enrollment configured advertise
+`accountIdentityReset: true` in `/client-configuration`. A signed-in user who has
+lost every authorized device and the recovery credentials can explicitly forfeit
+all previous project access and start with a new internal identity:
+
+1. POST `/account/reset/challenge` with the account's Bearer token. The server
+   returns the usual challenge shape (`id`, `nonce`, `expiresAt`), with a separate
+   reset purpose. Challenges expire after five minutes and share enrollment's
+   bounded per-account and per-instance capacity.
+2. Reauthenticate in the browser with `prompt=login`, `max_age=0` and that nonce.
+   The provider-signed ID token must match the access token's issuer and subject,
+   the native client audience and nonce, and carry fresh `auth_time` and MFA.
+3. POST `/account/reset` with `{ challengeId, identityToken,
+   forfeitProjectAccess: true }` and the Bearer token. Enrollment challenges and
+   reset challenges are not interchangeable. False or missing confirmation is
+   rejected. Proofs cannot be replayed after a successful reset.
+4. The server serializes against account access changes and atomically archives
+   the old user's login mapping under `urn:novalist:archived-account:<old-id>`,
+   clears its searchable email, revokes its devices, and creates a new user for
+   the original issuer and subject. It aborts the old account's live connections.
+   The response is `{ userId }`. Other accounts and the identity provider are
+   unchanged. No database migration or service restart is needed.
+5. The desktop persists a new, server-specific local device namespace, retaining
+   old credentials for local copies and other servers. Choose **Register this
+   device** and complete the separate fresh-MFA enrollment. Old project access
+   and ownership do not transfer; an owner must issue a new invitation.
+
+This is identity abandonment, not cryptographic recovery. Old user/device IDs,
+public keys, linking proofs, memberships, invitations and encrypted history stay
+attached to the archived identity so other collaborators can retain history.
+Projects with no other owner can become administratively stranded; the
+confirmation explicitly includes forfeiting ownership. A failed transaction
+retains the original account and devices and allows its pending proof to retry.
+Logs record only the archived and replacement account IDs, never identity tokens.
+
 The earlier `cnf.jkt` enrollment path remains available for callers that already
 obtain a provider-signed, key-bound MFA access token. It is not the browser flow
 and does not implement the full DPoP HTTP protocol.

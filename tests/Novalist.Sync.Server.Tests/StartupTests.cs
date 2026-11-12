@@ -91,7 +91,7 @@ public class StartupTests(DatabaseFixture database)
         using var client = server.CreateClient();
         var configuration = await client.GetFromJsonAsync<NativeClientConfiguration>(Protocol.ClientConfigurationPath, TestContext.Current.CancellationToken);
         Assert.Equal(new NativeClientConfiguration(1, "https://idp.test/realm", "novalist", "openid profile offline_access sync",
-            KeyBoundEnrollment: true), configuration);
+            KeyBoundEnrollment: true, AccountIdentityReset: true), configuration);
     }
 
     // The real server in the Production environment, configured only through settings,
