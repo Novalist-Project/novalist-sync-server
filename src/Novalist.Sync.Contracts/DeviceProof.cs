@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace Novalist.Sync.Contracts;
@@ -12,12 +13,22 @@ public sealed record DeviceConnectionChallenge(Guid UserId, Guid DeviceId, Guid 
 
 public static class DeviceProof
 {
+    public const int EnrollmentSaltLength = 32;
+
     public static byte[] EncodeRegistration(string serverUrl, Guid userId, DevicePublicKeys keys)
     {
-        if (userId == Guid.Empty || keys.DeviceId == Guid.Empty || keys.SigningPublicKey is not { Length: 32 } || keys.ReceivingPublicKey is not { Length: 32 })
-            throw new FormatException("Invalid device registration identities or public keys.");
-        return [.. "novalist/v1/device-register"u8, .. EncodeServerUrl(serverUrl), .. userId.ToByteArray(bigEndian: true), .. keys.DeviceId.ToByteArray(bigEndian: true),
-            .. keys.SigningPublicKey, .. keys.ReceivingPublicKey];
+        if (userId == Guid.Empty) throw new FormatException("Invalid device registration identities or public keys.");
+        return [.. "novalist/v1/device-register"u8, .. EncodeServerUrl(serverUrl), .. userId.ToByteArray(bigEndian: true), .. EncodeKeys(keys)];
+    }
+
+    // The OIDC nonce of a key-bound first-device sign-in. The account is unknown before sign-in, so the
+    // nonce binds the server and both public-key records; the ID token's subject binds the account.
+    public static string EnrollmentNonce(string serverUrl, DevicePublicKeys keys, DevicePublicKeys recoveryKeys, byte[] salt)
+    {
+        if (salt is not { Length: EnrollmentSaltLength }) throw new FormatException("An enrollment salt must contain 32 bytes.");
+        var hash = SHA256.HashData([.. "novalist/v1/device-enrollment"u8, .. EncodeServerUrl(serverUrl), .. EncodeKeys(keys),
+            .. EncodeKeys(recoveryKeys), .. salt]);
+        return Convert.ToBase64String(hash).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }
 
     public static byte[] EncodeConnection(DeviceConnectionChallenge challenge)
@@ -41,6 +52,13 @@ public static class DeviceProof
             uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 || uri.AbsoluteUri.Length > 2048)
             throw new FormatException("Device proofs require a canonical HTTPS server URL, or loopback HTTP for tests.");
         return uri.AbsoluteUri.TrimEnd('/') + '/';
+    }
+
+    private static byte[] EncodeKeys(DevicePublicKeys keys)
+    {
+        if (keys is null || keys.DeviceId == Guid.Empty || keys.SigningPublicKey is not { Length: 32 } || keys.ReceivingPublicKey is not { Length: 32 })
+            throw new FormatException("Invalid device registration identities or public keys.");
+        return [.. keys.DeviceId.ToByteArray(bigEndian: true), .. keys.SigningPublicKey, .. keys.ReceivingPublicKey];
     }
 
     private static byte[] EncodeServerUrl(string value)

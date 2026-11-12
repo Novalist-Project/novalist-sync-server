@@ -14,7 +14,7 @@ public static class NativeClientEndpoint
     }
 
     private static IResult GetConfiguration(IConfiguration configuration, IOptionsMonitor<JwtBearerOptions> bearer,
-        IHostEnvironment environment, RelayAuthenticationPolicy policy)
+        IHostEnvironment environment, RelayAuthenticationPolicy policy, IServiceProvider services)
     {
         if (!policy.Required)
             return Results.Ok(new NativeClientConfiguration(Protocol.Version, null, null, null, false));
@@ -31,6 +31,8 @@ public static class NativeClientEndpoint
             return Results.Problem(detail: "Native sign-in has not been configured.", statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
-        return Results.Ok(new NativeClientConfiguration(Protocol.Version, authority, clientId, scope));
+        return Results.Ok(new NativeClientConfiguration(Protocol.Version, authority, clientId, scope,
+            // Only persistent servers register DeviceProofServer; relay servers never enroll devices.
+            KeyBoundEnrollment: services.GetService<DeviceProofServer>()?.ServerUrl is not null));
     }
 }

@@ -1048,6 +1048,13 @@ Tokens with multiple audiences also require `azp` matching the native client;
 any supplied `azp` must match it. An enrollment challenge is exclusively claimed
 during registration, consumed on success, and available again after a failed
 transaction until its original expiry.
+Servers with verified devices also accept a key-bound proof, so a new device can
+sign in and enroll with one browser login: the client derives the nonce from the
+server URL, both public-key records and a random salt before it knows its account,
+and submits the salt instead of a challenge ID. The server recomputes the nonce,
+applies the same ID-token checks, binds the account through the matching subject,
+and accepts each nonce once. `/client-configuration` advertises this with
+`keyBoundEnrollment`.
 An existing `cnf.jkt` access-token flow remains accepted, but is no longer the
 only enrollment path. See [device-enrollment.md](device-enrollment.md) for client
 entry points, provider configuration, challenge limits, and metadata exposure.
