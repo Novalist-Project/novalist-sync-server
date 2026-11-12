@@ -49,6 +49,7 @@ else
     builder.Services.AddSingleton<DeviceEnrollmentChallenges>();
     builder.Services.AddSingleton<DeviceEnrollmentTokens>();
     builder.Services.AddScoped<VerifiedDeviceEnrollment>();
+    builder.Services.AddScoped<AccountIdentityReset>();
     builder.Services.AddScoped<ProjectAccess>();
     builder.Services.AddScoped<ProjectEpochAccess>();
     builder.Services.AddScoped<InvitationAccess>();
@@ -88,6 +89,7 @@ else
     app.MapDeviceEndpoints();
     app.MapVerifiedDeviceEndpoints();
     app.MapDeviceEnrollmentEndpoint();
+    app.MapAccountIdentityResetEndpoints();
     app.MapInvitationEndpoints();
 }
 app.MapNativeClientEndpoint();
